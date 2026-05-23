@@ -1,0 +1,51 @@
+title: Gutter
+description: A Flutter-inspired declarative UI library for Go that compiles to WebAssembly.
+
+# Project pages live at https://<user>.github.io/<repo>/. Override these for a
+# custom domain (set url to "https://your.domain" and baseurl to "").
+url: "https://runway-club.github.io"
+baseurl: "/gutter"
+
+remote_theme: just-the-docs/just-the-docs
+
+logo: "/assets/gutter_icon.png"
+favicon_ico: "/assets/gutter_icon.png"
+
+color_scheme: light
+search_enabled: true
+heading_anchors: true
+
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+
+aux_links:
+  "GitHub":
+    - "https://github.com/Runway-Club/gutter"
+
+aux_links_new_tab: true
+
+nav_external_links:
+  - title: View on GitHub
+    url: https://github.com/Runway-Club/gutter
+    hide_icon: false
+
+footer_content: 'Gutter is released under the MIT License. Built with <a href="https://just-the-docs.com">Just the Docs</a>.'
+
+ga_tracking_anonymize_ip: true
+
+# Use kramdown's GitHub-flavored markdown.
+markdown: kramdown
+kramdown:
+  syntax_highlighter: rouge
+  syntax_highlighter_opts:
+    block:
+      line_numbers: false
+
+# Don't try to build the example projects or theme specs.
+exclude:
+  - vendor
+  - Gemfile
+  - Gemfile.lock
+  - README.md
+  - "*.wasm"
