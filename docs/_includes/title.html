@@ -1,0 +1,11 @@
+{%- comment -%}
+  Overrides the default just-the-docs title.html. The original renders EITHER
+  the logo OR the site title text; we render both side-by-side so the brand
+  wordmark sits next to the red angle-bracket icon.
+{%- endcomment -%}
+{%- if site.logo -%}
+  <div class="site-logo" role="img" aria-label="{{ site.title }}"></div>
+  <span class="site-title-text">{{ site.title }}</span>
+{%- else -%}
+  {{ site.title }}
+{%- endif -%}

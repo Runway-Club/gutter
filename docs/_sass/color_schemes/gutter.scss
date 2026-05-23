@@ -1,0 +1,75 @@
+// Gutter brand scheme — red accent matching the icon, serif typography.
+//
+// just-the-docs reads variables from $name.scss in this directory when
+// `color_scheme: <name>` is set in _config.yml. Whatever isn't overridden
+// here falls back to the theme's default light scheme.
+
+// ── Brand palette ────────────────────────────────────────────────────
+// $red:        the icon's primary red face
+// $red-deep:   a slightly darker red for hover / pressed states
+// $red-tint:   a near-white red for subtle backgrounds (callouts, hovers)
+$red:      #d61c1f;
+$red-deep: #a31417;
+$red-tint: #fdecec;
+
+// ── just-the-docs color variables ────────────────────────────────────
+$link-color:               $red;
+$btn-primary-color:        $red;
+$base-button-color:        $red-tint;
+$body-heading-color:       #1a1a1a;
+$body-text-color:          #2b2b2b;
+
+// Sidebar / nav accents.
+$nav-child-link-color:     #4a4a4a;
+$sidebar-color:            #fafafa;
+$border-color:             #ececec;
+
+// Code blocks: keep them neutral so the red doesn't fight the syntax
+// highlighting palette.
+$code-background-color:    #f6f6f7;
+
+// Search highlight uses link-color by default, which is now red — good.
+
+// ── Typography ───────────────────────────────────────────────────────
+// Serif body + headings for the documentation aesthetic. Source Serif 4
+// is loaded via Google Fonts in _includes/head_custom.html.
+$body-font-family:
+  "Source Serif 4",
+  "Source Serif Pro",
+  ui-serif,
+  Georgia,
+  Cambria,
+  "Times New Roman",
+  Times,
+  serif;
+
+$body-heading-font-family: $body-font-family;
+
+// Code blocks stay monospaced — serif code is awful.
+$mono-font-family:
+  "JetBrains Mono",
+  ui-monospace,
+  SFMono-Regular,
+  Menlo,
+  Monaco,
+  Consolas,
+  "Liberation Mono",
+  monospace;
+
+// ── Site title text (rendered next to the logo) ──────────────────────
+// Selector defined in _includes/title.html. We attach the rule here so
+// theme overrides ship together.
+.site-button {
+  display: flex !important;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.site-title-text {
+  font-family: $body-heading-font-family;
+  font-weight: 700;
+  font-size: 1.25rem;
+  letter-spacing: -0.01em;
+  color: $body-heading-color;
+  line-height: 1;
+}

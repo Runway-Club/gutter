@@ -11,7 +11,7 @@ remote_theme: just-the-docs/just-the-docs
 logo: "/assets/gutter_icon.png"
 favicon_ico: "/assets/gutter_icon.png"
 
-color_scheme: light
+color_scheme: gutter
 search_enabled: true
 heading_anchors: true
 
