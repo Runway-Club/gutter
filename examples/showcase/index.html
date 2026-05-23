@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Gutter Showcase</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@100..900&display=swap" rel="stylesheet">
+  <style>
+    html, body { margin: 0; padding: 0; width: 100%; min-height: 100%; font-family: Lexend, system-ui, sans-serif; }
+    #app { width: 100%; min-height: 100vh; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <script src="wasm_exec.js"></script>
+  <script>
+    const go = new Go();
+    WebAssembly.instantiateStreaming(fetch("app.wasm"), go.importObject).then((result) => {
+      go.run(result.instance);
+    });
+  </script>
+</body>
+</html>
