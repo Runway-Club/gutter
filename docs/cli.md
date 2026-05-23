@@ -41,7 +41,7 @@ go build -o bin/gutter ./cmd/gutter
 gutter new [name] [--module github.com/you/name]
 ```
 
-Creates a directory `name/` containing `main.go`, `index.html`, and `go.mod`. Without arguments, it walks you through a short interactive prompt for the project name and Go module path.
+Creates a directory `name/` containing `main.go`, `index.html`, `go.mod`, and a `.gitignore` (covering `/dist/` and any stray top-level `app.wasm` / `wasm_exec.js`). Without arguments, it walks you through a short interactive prompt for the project name and Go module path. After writing the files it runs `go get github.com/Runway-Club/gutter@latest` inside the new project so `go.mod` is pinned to the current published version.
 
 ```sh
 # Interactive:
@@ -69,10 +69,14 @@ gutter run [--addr :8080]
 
 The fastest path to seeing pixels:
 
-1. Compiles `./main.go` to `./app.wasm` with `GOOS=js GOARCH=wasm`.
-2. Copies `wasm_exec.js` from `$GOROOT/lib/wasm/` (Go 1.24+) or `$GOROOT/misc/wasm/` (older) next to it.
-3. Registers `application/wasm` as the MIME type for `.wasm` (required — browsers refuse to instantiate WASM served with the wrong MIME).
-4. Serves the current directory over HTTP on `:8080`.
+1. Bundles your project into `./dist/` with `GOOS=js GOARCH=wasm`:
+   - Compiles to `./dist/app.wasm`.
+   - Copies `wasm_exec.js` from `$GOROOT/lib/wasm/` (Go 1.24+) or `$GOROOT/misc/wasm/` (older) into `./dist/`.
+   - Copies `index.html` and everything in `./public/` (if present) into `./dist/`.
+2. Registers `application/wasm` as the MIME type for `.wasm` (required — browsers refuse to instantiate WASM served with the wrong MIME).
+3. Serves `./dist/` over HTTP on `:8080`.
+
+Your project root stays clean — every artifact lives under `./dist/`, the same directory `gutter build` writes to. So what you see running locally is byte-identical to what you'd deploy.
 
 ```sh
 gutter run            # serves at http://localhost:8080
@@ -87,8 +91,8 @@ gutter run dev [--addr :8080]
 
 Same as `gutter run`, plus:
 
-- Watches `.go`, `.html`, and `.css` files (skipping `.git`, `node_modules`, `dist`, `vendor`, and dotfiles).
-- Rebuilds on save, debouncing rapid changes by ~150ms.
+- Watches `.go`, `.html`, and `.css` files (skipping `.git`, `node_modules`, `dist`, `vendor`, and dotfiles — so writes into `./dist/` never cause an infinite rebuild loop).
+- Re-bundles into `./dist/` on save, debouncing rapid changes by ~150ms.
 - Increments an internal build counter on every successful rebuild.
 - Injects a tiny `<script>` snippet into `index.html` responses that polls `/__gutter/build` every 500ms; when the counter changes, the browser reloads.
 
@@ -191,18 +195,21 @@ The files are intentionally not overwritten if you've customized them — the CL
 
 | Step                    | What the CLI does                                                                            |
 | ----------------------- | -------------------------------------------------------------------------------------------- |
-| Building WASM           | `exec.Command("go", "build", "-o", out)` with `GOOS=js`, `GOARCH=wasm` set in the env.       |
+| Building WASM           | `exec.Command("go", "build", "-o", "dist/app.wasm")` with `GOOS=js`, `GOARCH=wasm` set in the env. |
 | Locating `wasm_exec.js` | Tries `$GOROOT/lib/wasm/wasm_exec.js` first (Go 1.24+), falls back to `$GOROOT/misc/wasm/`.  |
-| Serving                 | `http.FileServer(http.Dir("."))`. The wasm MIME type is added via `mime.AddExtensionType`.   |
-| Watching                | `fsnotify.Watcher` recursive over your project; skips `.git`, `node_modules`, `dist`, dotfiles. |
-| Live-reload injection   | Inserts a `<script>` before `</body>` that polls `/__gutter/build`.                          |
+| Bundling                | Copies `index.html`, `wasm_exec.js`, and `./public/` (if present) into `./dist/`.            |
+| Serving                 | `http.FileServer(http.Dir("dist"))`. The wasm MIME type is added via `mime.AddExtensionType`. |
+| Watching                | `fsnotify.Watcher` recursive over your project; skips `.git`, `node_modules`, `dist`, `vendor`, dotfiles. |
+| Live-reload injection   | Inserts a `<script>` before `</body>` of the served `index.html` that polls `/__gutter/build`. |
 
 You can replicate any of this by hand if you'd rather drive the toolchain yourself:
 
 ```sh
-GOOS=js GOARCH=wasm go build -o app.wasm .
-cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" .   # or misc/wasm for older Go
-python3 -m http.server 8080                       # serve, but doesn't set wasm MIME
+mkdir -p dist
+GOOS=js GOARCH=wasm go build -o dist/app.wasm .
+cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" dist/   # or misc/wasm for older Go
+cp index.html dist/
+cd dist && python3 -m http.server 8080              # serve, but doesn't set wasm MIME
 ```
 
 The CLI's main value is consistent behavior across Go versions, the right MIME type, and live reload.
@@ -213,9 +220,9 @@ The CLI's main value is consistent behavior across Go versions, the right MIME t
 
 | Command                | What it does                                                       |
 | ---------------------- | ------------------------------------------------------------------ |
-| `gutter new <name>`    | Scaffold a project: `main.go`, `index.html`, `go.mod`.             |
-| `gutter run`           | Build to WASM, copy `wasm_exec.js`, serve on `:8080`.              |
-| `gutter run dev`       | Same as `run`, plus rebuild + reload on `.go` / `.html` / `.css` changes. |
+| `gutter new <name>`    | Scaffold a project: `main.go`, `index.html`, `go.mod`, `.gitignore`. |
+| `gutter run`           | Bundle into `./dist/` and serve it on `:8080`.                     |
+| `gutter run dev`       | Same as `run`, plus re-bundle + browser reload on `.go` / `.html` / `.css` changes. |
 | `gutter build`         | Build a production-ready bundle into `./dist`.                     |
 | `gutter build deploy`  | Build, generate Dockerfile + nginx.conf, run `docker build`.       |
 | `gutter --version`     | Print the CLI version.                                             |

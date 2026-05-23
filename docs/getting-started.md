@@ -54,16 +54,17 @@ gutter new myapp
 cd myapp
 ```
 
-`gutter new` walks you through a short interactive prompt (project name + Go module path) if you skip the arguments. It writes three files:
+`gutter new` walks you through a short interactive prompt (project name + Go module path) if you skip the arguments. It writes four files:
 
 ```text
 myapp/
-├── go.mod         # Go module declaration
+├── .gitignore     # Ignores ./dist/ and any stray top-level build artifacts
+├── go.mod         # Go module declaration (pinned to the latest Gutter release)
 ├── index.html     # HTML host page (loads Lexend + wasm_exec.js + your app)
 └── main.go        # Your app — Build a widget tree, call RunApp
 ```
 
-The `main.go` it writes is a complete, runnable "Hello, Gutter!" — a `Scaffold` with an `AppBar`, a centered `Card`, a `Heading`, a `Body`, and a primary `Button`.
+After writing them, the CLI runs `go get github.com/Runway-Club/gutter@latest` inside the new project, so `go.mod` is pinned to the current published version (no manual `go mod tidy` needed). The `main.go` it writes is a complete, runnable "Hello, Gutter!" — a `Scaffold` with an `AppBar`, a centered `Card`, a `Heading`, a `Body`, and a primary `Button`.
 
 > **Working from a local checkout?** `gutter new` does not emit a `replace` directive. If your `go.mod` should point at your local Gutter clone instead of the published module, add the directive yourself:
 >
@@ -81,7 +82,7 @@ gutter run
 gutter run dev
 ```
 
-`gutter run` compiles `./main.go` to `./app.wasm`, copies `wasm_exec.js` next to it, registers the `application/wasm` MIME type, and serves the current directory at <http://localhost:8080>.
+`gutter run` compiles your app and bundles `app.wasm`, your `index.html`, `wasm_exec.js`, and anything in `./public/` into `./dist/`, registers the `application/wasm` MIME type, and serves `./dist/` at <http://localhost:8080>. Your project root stays clean — all build artifacts live under `./dist/`.
 
 `gutter run dev` does the same, but also watches `.go`, `.html`, and `.css` files, rebuilds on save, and injects a small reload-poller script into `index.html` so your browser refreshes automatically when the build counter ticks.
 
