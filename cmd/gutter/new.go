@@ -95,6 +95,15 @@ const goModTemplate = `module __MODULE__
 go 1.21
 `
 
+// gitignoreTemplate ignores artifacts produced by `gutter run` / `gutter run dev`
+// / `gutter build`. The CLI bundles everything into ./dist; the bare app.wasm /
+// wasm_exec.js entries cover users who ran the toolchain by hand before.
+const gitignoreTemplate = `# Gutter build output
+/dist/
+/app.wasm
+/wasm_exec.js
+`
+
 var (
 	nameRE   = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9_-]*$`)
 	moduleRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/-]*$`)
@@ -167,6 +176,7 @@ func runNew(name, modulePath string) error {
 		"main.go":    strings.ReplaceAll(mainGoTemplate, "__NAME__", name),
 		"index.html": strings.ReplaceAll(indexHTMLTemplate, "__NAME__", name),
 		"go.mod":     strings.ReplaceAll(goModTemplate, "__MODULE__", modulePath),
+		".gitignore": gitignoreTemplate,
 	}
 	for fname, content := range files {
 		path := filepath.Join(name, fname)

@@ -67,37 +67,56 @@ func buildCmd() *cobra.Command {
 func runBuild() error {
 	outDir := "dist"
 	printTitle("Building project")
+	if err := bundleInto(outDir, true); err != nil {
+		return err
+	}
+	fmt.Println()
+	printInfo("Output: %s", styleAccent.Render("./"+outDir+"/"))
+	return nil
+}
+
+// bundleInto compiles the project to WASM and assembles the supporting assets
+// inside outDir. It creates outDir if missing, writes app.wasm, copies
+// wasm_exec.js, and copies index.html and public/ when those exist in the
+// current directory. Set verbose=true for per-step logs (used by `gutter
+// build`); set it to false for quiet rebuilds inside `gutter run dev`.
+func bundleInto(outDir string, verbose bool) error {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
 	if err := buildWasm(filepath.Join(outDir, "app.wasm")); err != nil {
 		return fmt.Errorf("build failed: %w", err)
 	}
-	printOK("wrote %s", filepath.Join(outDir, "app.wasm"))
+	if verbose {
+		printOK("wrote %s", filepath.Join(outDir, "app.wasm"))
+	}
 
 	if _, err := os.Stat("index.html"); err == nil {
 		if err := copyFile("index.html", filepath.Join(outDir, "index.html")); err != nil {
 			return err
 		}
-		printOK("copied index.html")
-	} else {
+		if verbose {
+			printOK("copied index.html")
+		}
+	} else if verbose {
 		printWarn("no index.html found in current directory")
 	}
 
 	if err := ensureWasmExec(outDir); err != nil {
 		return err
 	}
-	printOK("included wasm_exec.js")
+	if verbose {
+		printOK("included wasm_exec.js")
+	}
 
 	if info, err := os.Stat("public"); err == nil && info.IsDir() {
 		if err := copyDir("public", outDir); err != nil {
 			return fmt.Errorf("copy public/: %w", err)
 		}
-		printOK("copied public/ assets")
+		if verbose {
+			printOK("copied public/ assets")
+		}
 	}
-
-	fmt.Println()
-	printInfo("Output: %s", styleAccent.Render("./"+outDir+"/"))
 	return nil
 }
 

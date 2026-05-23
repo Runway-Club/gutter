@@ -43,20 +43,22 @@ func runCmd() *cobra.Command {
 	return cmd
 }
 
+// serveDir is the output directory `gutter run` / `gutter run dev` bundle into
+// and serve from. Matches `gutter build`'s output, so the served bundle is
+// identical to a production build (just rebuilt on every save in dev mode).
+const serveDir = "dist"
+
 // buildCounter is bumped after every successful rebuild; the injected
 // dev-mode client polls it and reloads when it changes.
 var buildCounter atomic.Int64
 
 func runServe(addr string, dev bool) error {
 	printTitle("Initial build")
-	if err := buildWasm("app.wasm"); err != nil {
+	if err := bundleInto(serveDir, false); err != nil {
 		return fmt.Errorf("build failed: %w", err)
 	}
-	if err := ensureWasmExec("."); err != nil {
-		return err
-	}
 	buildCounter.Add(1)
-	printOK("app.wasm ready")
+	printOK("bundle ready in %s", styleAccent.Render("./"+serveDir+"/"))
 	_ = mime.AddExtensionType(".wasm", "application/wasm")
 
 	mux := http.NewServeMux()
@@ -72,7 +74,7 @@ func runServe(addr string, dev bool) error {
 				urlPath += "index.html"
 			}
 			if strings.HasSuffix(urlPath, ".html") {
-				data, err := os.ReadFile(filepath.Clean(urlPath))
+				data, err := os.ReadFile(filepath.Join(serveDir, filepath.Clean(urlPath)))
 				if err == nil {
 					injected := injectReloadScript(string(data))
 					w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -81,16 +83,16 @@ func runServe(addr string, dev bool) error {
 					return
 				}
 			}
-			http.FileServer(http.Dir(".")).ServeHTTP(w, r)
+			http.FileServer(http.Dir(serveDir)).ServeHTTP(w, r)
 		})
 		go watchAndRebuild()
 	} else {
-		mux.Handle("/", http.FileServer(http.Dir(".")))
+		mux.Handle("/", http.FileServer(http.Dir(serveDir)))
 	}
 
 	if dev {
 		printTitle("Dev server")
-		printInfo("watching .go files in %s and rebuilding on save", mustCWD())
+		printInfo("watching .go / .html / .css in %s and rebuilding on save", mustCWD())
 	} else {
 		printTitle("Server")
 	}
@@ -167,7 +169,7 @@ func watchAndRebuild() {
 
 			printInfo("change detected — rebuilding")
 			start := time.Now()
-			if err := buildWasm("app.wasm"); err != nil {
+			if err := bundleInto(serveDir, false); err != nil {
 				printErr("rebuild failed: %v", err)
 			} else {
 				buildCounter.Add(1)
