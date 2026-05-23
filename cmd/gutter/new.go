@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -84,11 +85,14 @@ const indexHTMLTemplate = `<!DOCTYPE html>
 </html>
 `
 
+// goModTemplate is intentionally minimal — no `require` line. After scaffolding
+// we run `go get github.com/Runway-Club/gutter@latest` inside the new project,
+// which resolves the current published version and writes the require for us.
+// If that fails (offline, network blocked, module unavailable), we leave the
+// file as-is and print a hint so the user can run it themselves.
 const goModTemplate = `module __MODULE__
 
 go 1.21
-
-require github.com/Runway-Club/gutter v0.0.0
 `
 
 var (
@@ -174,13 +178,41 @@ func runNew(name, modulePath string) error {
 	printTitle("Project scaffolded")
 	printOK("Created %s/", styleAccent.Render(name))
 	printDim("  module: %s", modulePath)
+
+	// Resolve the framework dependency to the current published version.
+	// Non-fatal if it fails — the user can run the command themselves.
+	gotLatest := fetchGutterLatest(name)
+
 	fmt.Println()
 	printInfo("Next steps:")
 	printDim("  cd %s", name)
+	if !gotLatest {
+		printDim("  go get github.com/Runway-Club/gutter@latest")
+	}
 	printDim("  gutter run dev")
 	fmt.Println()
 	printDim("(Local checkout? Add a replace directive to %s/go.mod pointing at your gutter checkout.)", name)
 	return nil
+}
+
+// fetchGutterLatest runs `go get github.com/Runway-Club/gutter@latest` inside
+// the scaffolded project so go.mod is pinned to a real published version.
+// Returns true on success; on failure logs a warning and returns false so the
+// caller can print a manual instruction.
+func fetchGutterLatest(projectDir string) bool {
+	cmd := exec.Command("go", "get", "github.com/Runway-Club/gutter@latest")
+	cmd.Dir = projectDir
+	cmd.Env = os.Environ()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		printWarn("could not resolve github.com/Runway-Club/gutter@latest: %v", err)
+		if len(out) > 0 {
+			printDim("  %s", strings.TrimSpace(string(out)))
+		}
+		return false
+	}
+	printOK("pinned github.com/Runway-Club/gutter@latest")
+	return true
 }
 
 func validateName(s string) error {
