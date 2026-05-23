@@ -237,3 +237,7 @@ Early prototype. Known gaps:
 - `SetState` is synchronous and unbatched.
 - No `Image`, no routing, no theming, no animation.
 - No tests; WASM tests need a browser harness.
+
+## License
+
+[MIT](LICENSE) © Runway Club.
