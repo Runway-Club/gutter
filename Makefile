@@ -18,7 +18,7 @@ LDFLAGS    ?= -s -w
 
 CLI_PKG := ./cmd/gutter
 
-.PHONY: help build install uninstall vet wasm examples clean tidy run-counter
+.PHONY: help build install uninstall vet wasm examples llms clean tidy run-counter
 
 help:
 	@echo "Gutter CLI Makefile"
@@ -30,6 +30,7 @@ help:
 	@echo "  make vet         go vet host + WASM"
 	@echo "  make wasm        GOOS=js GOARCH=wasm go build ./..."
 	@echo "  make examples    Build examples/showcase to WASM"
+	@echo "  make llms        Generate llms-full.md (single-file docs for AI agents)"
 	@echo "  make tidy        go mod tidy"
 	@echo "  make clean       Remove build artefacts"
 
@@ -57,6 +58,9 @@ wasm:
 
 examples:
 	cd examples/showcase && GOOS=js GOARCH=wasm $(GO) build -o app.wasm .
+
+llms:
+	$(GO) run scripts/gen_llms.go
 
 tidy:
 	$(GO) mod tidy
