@@ -54,3 +54,60 @@ func fallback(value, def string) string {
 	}
 	return def
 }
+
+// propSyncHost is a HostWidget that exposes OnMount and OnUnmount alongside
+// the usual tag/attrs/style/events bundle. It's used by input-style widgets
+// (Checkbox, Switch, Slider, Select, RadioGroup) that need to imperatively
+// sync DOM properties (checked, value) after every reconcile — applyAttrs
+// only writes attributes, which for form elements just sets the default,
+// not the live property the browser actually renders.
+type propSyncHost struct {
+	tag       string
+	attrs     map[string]string
+	style     map[string]string
+	events    map[string]func(gutter.Event)
+	children  []gutter.Widget
+	text      string
+	onMount   func(node any)
+	onUnmount func(node any)
+}
+
+func (p propSyncHost) Host() *gutter.Host {
+	return &gutter.Host{
+		Tag:       p.tag,
+		Text:      p.text,
+		Attrs:     p.attrs,
+		Style:     p.style,
+		Events:    p.events,
+		Children:  p.children,
+		OnMount:   p.onMount,
+		OnUnmount: p.onUnmount,
+	}
+}
+
+// overlayBackdrop builds the dim full-viewport scrim used by Popup, Drawer,
+// and BottomSheet. When open is false the scrim is transparent and ignores
+// pointer events so clicks fall through to the underlying app. onDismiss may
+// be nil for a non-dismissible overlay.
+func overlayBackdrop(open bool, zIndex string, onDismiss func()) Styled {
+	style := map[string]string{
+		"position":   "fixed",
+		"inset":      "0",
+		"background": "rgba(0,0,0,0.45)",
+		"z-index":    zIndex,
+		"transition": "opacity 0.2s ease-out",
+	}
+	if open {
+		style["opacity"] = "1"
+		style["pointer-events"] = "auto"
+	} else {
+		style["opacity"] = "0"
+		style["pointer-events"] = "none"
+	}
+	events := map[string]func(gutter.Event){}
+	if onDismiss != nil {
+		dismiss := onDismiss
+		events["click"] = func(gutter.Event) { dismiss() }
+	}
+	return Styled{Style: style, Events: events}
+}

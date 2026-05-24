@@ -254,6 +254,79 @@ The reconciler updates the `<input>` element in place rather than swapping it ou
 
 ---
 
+## Beyond `SetState` — `Notifier` and `ObserverBuilder`
+
+`SetState` is the right tool when the state and the widget that displays it sit close together. When state needs to cross subtrees — a header badge listening to a counter buried in the body, a popup open/closed flag driven by a far-away button — lift the value into a `Notifier[T]` and observe it with `ObserverBuilder[T]`.
+
+```go
+type Notifier[T any] // exposes Value(), Set(T), Update(fn), Listen(fn) (cancel func())
+```
+
+Construct with `gutter.NewNotifier(initial)`. Pass the pointer to whichever widgets need to read or write it.
+
+```go
+counter := gutter.NewNotifier(0)
+
+widgets.Column{
+    Children: []gutter.Widget{
+        widgets.ObserverBuilder[int]{
+            Source: counter,
+            Builder: func(_ *gutter.BuildContext, v int) gutter.Widget {
+                return widgets.Heading{Level: widgets.H2, Text: fmt.Sprintf("Count: %d", v)}
+            },
+        },
+        widgets.Button{
+            Label:     "+",
+            OnPressed: func() { counter.Update(func(v int) int { return v + 1 }) },
+        },
+    },
+}
+```
+
+Only the `ObserverBuilder`'s subtree rebuilds when the counter changes — no `SetState` on a high ancestor, no full-tree rebuild.
+
+`Listenable[T]` is the read-side interface — anything implementing `Value()` and `Listen()` works as a source. Gutter's `Router` exposes itself as a `Listenable[string]` so widgets can react to navigation.
+
+See [ObserverBuilder](widgets/observerbuilder.html) for the full pattern, and the overlay widgets ([Popup](widgets/popup.html), [Drawer](widgets/drawer.html), [BottomSheet](widgets/bottomsheet.html)) which take a `Listenable[bool]` for visibility.
+
+---
+
+## Async work — `AsyncBuilder`
+
+For one-shot async loads (fetch a user, read a file from the server), [`AsyncBuilder[T]`](widgets/asyncbuilder.html) runs a `func(ctx) (T, error)` in a goroutine on mount and rebuilds with an `AsyncSnapshot` once it returns:
+
+```go
+widgets.AsyncBuilder[User]{
+    Load: func(ctx context.Context) (User, error) { return fetchUser(ctx, id) },
+    Builder: func(_ *gutter.BuildContext, snap widgets.AsyncSnapshot[User]) gutter.Widget {
+        switch snap.State {
+        case widgets.AsyncPending: return widgets.Body{Text: "Loading…"}
+        case widgets.AsyncFailed:  return widgets.Body{Text: snap.Error.Error()}
+        }
+        return widgets.Heading{Level: widgets.H3, Text: snap.Data.Name}
+    },
+}
+```
+
+The context is canceled when the widget unmounts, so HTTP clients and channels listening on `ctx.Done()` clean up automatically.
+
+For CPU-heavy work, use [`Worker`](widgets/worker.html) instead — `AsyncBuilder` runs on the WASM single-threaded event loop and would block the UI.
+
+---
+
+## When to reach for what
+
+| You want to…                                                     | Pattern                                                    |
+| ---------------------------------------------------------------- | ---------------------------------------------------------- |
+| Mutate a value owned by this widget                              | `StatefulWidget` + `SetState`                              |
+| Share a value with a non-descendant widget                       | `gutter.Notifier[T]` + [`ObserverBuilder[T]`](widgets/observerbuilder.html) |
+| Show a `Loading… / Done / Error` for an async fetch              | [`AsyncBuilder[T]`](widgets/asyncbuilder.html)             |
+| Animate a value between two extremes                             | [`AnimationController`](widgets/animation.html)            |
+| Toggle an overlay (popup / drawer / sheet)                       | `Notifier[bool]` consumed by the overlay widget directly   |
+| Run CPU-bound work without blocking the UI                       | [`Worker`](widgets/worker.html)                            |
+
+---
+
 ## Cheat sheet
 
 | You want to…                            | Do this                                                                                  |
@@ -263,5 +336,5 @@ The reconciler updates the `<input>` element in place rather than swapping it ou
 | Clean up when the widget goes away      | Implement `Dispose()` on your State.                                                     |
 | Preserve State across list reorder      | Implement `Keyed` on the widget, or wrap it in `widgets.WithKey`.                        |
 | Coalesce multiple changes into one rebuild | Put all the mutations inside a single `SetState(func() { … })` call.                  |
-| Share state between sibling widgets     | Lift the State into the nearest common ancestor StatefulWidget.                          |
-| Update an input without losing focus    | Just `SetState` — the reconciler updates the `<input>` in place.                         |
+| Share state between sibling widgets     | Lift the State into the nearest common ancestor StatefulWidget, OR use a `Notifier[T]` shared by both. |
+| Update an input without losing focus    | Just `SetState` — the reconciler updates the `<input>` in place, the DOM `value` property is synced caret-preserving. |

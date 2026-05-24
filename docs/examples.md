@@ -6,7 +6,15 @@ nav_order: 7
 # Examples
 {: .no_toc }
 
-Two runnable example apps ship in [`examples/`](https://github.com/Runway-Club/gutter/tree/main/examples). They're not just demos — they're the smallest end-to-end illustration of every concept in the framework.
+Five runnable example apps ship in [`examples/`](https://github.com/Runway-Club/gutter/tree/main/examples), in increasing order of surface area:
+
+- **counter** — minimal `StatefulWidget` + `SetState`, ~70 lines.
+- **router** — `Router` + `RouterView` with `:param` capture and browser history.
+- **kanban** — three-column drag-and-drop board built on `Controller[T]` + `Draggable[T]` + `DropTarget[T]` + `DragOverlay[T]`.
+- **playground** — a small sandbox for trying things out.
+- **showcase** — the full catalog tour. Every widget the framework ships, plus the `community/login_with_google` button. Use this as a reference for "how do I use widget X?".
+
+They're not just demos — they're the smallest end-to-end illustration of every concept in the framework.
 {: .fs-6 .fw-300 }
 
 1. TOC
@@ -16,7 +24,7 @@ Two runnable example apps ship in [`examples/`](https://github.com/Runway-Club/g
 
 ## Running an example
 
-Both examples use a `replace` directive in their own `go.mod` so they build against the working copy of the repository:
+Every example uses a `replace` directive in its own `go.mod` so it builds against the working copy of the repository:
 
 ```sh
 git clone https://github.com/Runway-Club/gutter
@@ -25,7 +33,7 @@ go run ../../cmd/gutter run
 # open http://localhost:8080
 ```
 
-Swap `counter` for `showcase` to run the other one.
+Swap `counter` for any of `router`, `playground`, `showcase`.
 
 ---
 
@@ -138,13 +146,59 @@ The pattern of "outer `Surface{Padding: "0"}` wrapping a `Column` of full-bleed 
 
 ---
 
+## `examples/router` — path routing with browser history
+
+[Source](https://github.com/Runway-Club/gutter/tree/main/examples/router). Three routes, `:id` capture, browser back/forward integration.
+
+```go
+router := widgets.NewRouter(map[string]widgets.RouteBuilder{
+    "/":          func(_ widgets.RouteParams) gutter.Widget { return HomePage{} },
+    "/about":     func(_ widgets.RouteParams) gutter.Widget { return AboutPage{} },
+    "/user/:id":  func(p widgets.RouteParams) gutter.Widget { return UserPage{ID: p["id"]} },
+}, NotFoundPage{})
+
+gutter.RunApp(widgets.Scaffold{Body: widgets.RouterView{Router: router}})
+```
+
+Reloading at `/user/42` works because `gutter run` falls back to `index.html` for extensionless paths. See [Router](widgets/router.html) for details.
+
+---
+
+## `examples/showcase` — every widget, one page
+
+[Source](https://github.com/Runway-Club/gutter/tree/main/examples/showcase). The longest example, demonstrating every widget in the catalog under whichever theme you pick at build time:
+
+```sh
+cd examples/showcase
+
+# Default — Apple:
+go run ../../cmd/gutter run
+
+# Or, compile with Meta:
+GOOS=js GOARCH=wasm go build -ldflags "-X 'main.themeName=meta'" -o app.wasm .
+gutter run
+```
+
+The page is one long scrollable column with sections for typography, buttons, icons, cards, surfaces, badges, images, all input variants, file picker, gestures, animation + transform, canvas, observer + async + worker, list + listbuilder (10,000 virtualized rows), router (mini inner router), and the `community/login_with_google` button.
+
+### What to notice
+
+- **`StickyAppBar: true`** on the Scaffold keeps the navigation strip pinned to the viewport as the long page scrolls.
+- **Mini Router inside one section** uses paths like `/`, `/specs`, `/help`. It normalizes `/index.html` → `/` in `InitState` so the first paint shows the Home pane.
+- **ListBuilder with 10,000 rows** demonstrates the recycling contract — only ~10 row DOM nodes exist at any time; scrolling updates them in place positionally.
+- **Worker uses an inline Go task** registered via `gutter.NewWorkerTask` so the same `app.wasm` serves both the main app and the worker.
+- **LoginWithGoogle** lives in `community/login_with_google` and is wired with a real client ID for end-to-end OAuth.
+
+---
+
 ## Beyond the examples
 
 The examples cover the framework's surface area. From here, the natural next steps are:
 
 - **Write a custom widget.** A `StatelessWidget` that wraps a `Card` + `Column` to give your feature tile a name (`FeatureCard{Title, Body}`).
-- **Build a small form.** A `StatefulWidget` with `Input` fields, `OnChanged → SetState`, a submit `Button`, and an `Error` boolean per field.
+- **Build a small form.** A `StatefulWidget` with `Input` fields of different types, `OnChanged → SetState`, a submit `Button`, and an `Error` boolean per field.
 - **Write a list with reorderable items.** Use `widgets.WithKey{Key: item.ID, Child: …}` so the reconciler preserves each item's State across reorders.
 - **Define your own theme.** Copy `themes/apple.go`, change the values, give the variable a new name, pass it to `Scaffold.Theme`.
+- **Drop in `community/login_with_google`** for real Google sign-in.
 
 If you build something interesting, the maintainers want to hear about it.

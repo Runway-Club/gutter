@@ -1,6 +1,6 @@
 ---
 title: CLI
-nav_order: 6
+nav_order: 10
 ---
 
 # The `gutter` CLI
@@ -24,7 +24,7 @@ This drops a `gutter` binary into `$GOBIN` (or `$GOPATH/bin`). Check it's on you
 
 ```sh
 gutter --version
-# gutter version 0.2.0
+# gutter version 0.3.0
 ```
 
 From a local checkout:
@@ -163,6 +163,22 @@ dist/
 
 ---
 
+## `--tinygo` — smaller bundles
+
+`gutter build`, `gutter run`, `gutter run dev`, and `gutter build deploy` all accept `--tinygo`, which compiles with [TinyGo](https://tinygo.org) (`tinygo build -target wasm`) instead of the standard Go toolchain and bundles TinyGo's matching `wasm_exec.js`. The two runtimes ship incompatible `wasm_exec.js` files, so the CLI always overwrites `dist/wasm_exec.js` to match the toolchain you picked.
+
+```sh
+gutter build --tinygo
+gutter run --tinygo
+gutter run dev --tinygo
+```
+
+TinyGo produces dramatically smaller WebAssembly — typically **4–8× smaller** than the Go toolchain (e.g. a counter app drops from ~2.8 MB to ~340 KB). The trade-off is a slower compile and TinyGo's narrower standard-library support, so keep `--tinygo` opt-in and test the result.
+
+`tinygo` must be on your `PATH`; if it isn't, the build fails fast with an install pointer rather than silently falling back to Go.
+
+---
+
 ## `gutter build deploy` — Docker image
 
 ```text
@@ -195,8 +211,8 @@ The files are intentionally not overwritten if you've customized them — the CL
 
 | Step                    | What the CLI does                                                                            |
 | ----------------------- | -------------------------------------------------------------------------------------------- |
-| Building WASM           | `exec.Command("go", "build", "-o", "dist/app.wasm")` with `GOOS=js`, `GOARCH=wasm` set in the env. |
-| Locating `wasm_exec.js` | Tries `$GOROOT/lib/wasm/wasm_exec.js` first (Go 1.24+), falls back to `$GOROOT/misc/wasm/`.  |
+| Building WASM           | `exec.Command("go", "build", "-o", "dist/app.wasm")` with `GOOS=js`, `GOARCH=wasm` set in the env. With `--tinygo`: `tinygo build -o dist/app.wasm -target wasm`. |
+| Locating `wasm_exec.js` | Tries `$GOROOT/lib/wasm/wasm_exec.js` first (Go 1.24+), falls back to `$GOROOT/misc/wasm/`. With `--tinygo`: `$(tinygo env TINYGOROOT)/targets/wasm_exec.js`.  |
 | Bundling                | Copies `index.html`, `wasm_exec.js`, and `./public/` (if present) into `./dist/`.            |
 | Serving                 | `http.FileServer(http.Dir("dist"))`. The wasm MIME type is added via `mime.AddExtensionType`. |
 | Watching                | `fsnotify.Watcher` recursive over your project; skips `.git`, `node_modules`, `dist`, `vendor`, dotfiles. |

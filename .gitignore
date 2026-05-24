@@ -2,6 +2,8 @@
 /bin/
 /gutter
 *.wasm
+*.wasm.gz
+dist/
 
 # Go
 *.test

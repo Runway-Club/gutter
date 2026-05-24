@@ -8,24 +8,27 @@ import (
 // Scaffold is the app shell. It's typically the root widget your app's
 // Build returns, and it ties together the four big pieces of a real app:
 //
-//   - Title       — pushed to document.title
-//   - Theme       — switches the active theme for this subtree (and, since
-//                   gutter has one BuildContext per app, effectively the
-//                   whole app)
-//   - AppBar      — the top navigation strip (use widgets.AppBar)
-//   - Body        — your main content; takes the remaining vertical space
-//   - Footer      — an optional bottom strip (legal, build info, etc.)
+//   - Title         — pushed to document.title
+//   - Theme         — switches the active theme for this subtree (and, since
+//                     gutter has one BuildContext per app, effectively the
+//                     whole app)
+//   - AppBar        — the top navigation strip (use widgets.AppBar)
+//   - StickyAppBar  — when true, pin the AppBar to the viewport top while
+//                     the rest of the page scrolls
+//   - Body          — your main content; takes the remaining vertical space
+//   - Footer        — an optional bottom strip (legal, build info, etc.)
 //
 // Background and ink come from the active theme's canvas/ink. Body sits in
 // a flex column between AppBar and Footer, so a Center inside Body fills
 // the viewport minus the chrome — exactly what you want for landing pages,
 // dialogs, and most app screens.
 type Scaffold struct {
-	Title  string
-	Theme  *themes.Theme
-	AppBar gutter.Widget
-	Body   gutter.Widget
-	Footer gutter.Widget
+	Title        string
+	Theme        *themes.Theme
+	AppBar       gutter.Widget
+	StickyAppBar bool
+	Body         gutter.Widget
+	Footer       gutter.Widget
 }
 
 func (s Scaffold) Build(ctx *gutter.BuildContext) gutter.Widget {
@@ -43,7 +46,23 @@ func (s Scaffold) Build(ctx *gutter.BuildContext) gutter.Widget {
 
 	var children []gutter.Widget
 	if s.AppBar != nil {
-		children = append(children, s.AppBar)
+		bar := s.AppBar
+		if s.StickyAppBar {
+			// `position: sticky` keeps the bar in the normal flex layout
+			// until the viewport scrolls past its initial position, then
+			// pins it at `top: 0`. The z-index sits below overlays
+			// (Popup/Drawer/BottomSheet use 1000) so a modal still
+			// covers the bar.
+			bar = Styled{
+				Style: map[string]string{
+					"position": "sticky",
+					"top":      "0",
+					"z-index":  "900",
+				},
+				Children: []gutter.Widget{s.AppBar},
+			}
+		}
+		children = append(children, bar)
 	}
 	if s.Body != nil {
 		// Body takes the remaining space (flex: 1) and is itself a flex

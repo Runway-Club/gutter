@@ -19,26 +19,31 @@ import (
 
 func runCmd() *cobra.Command {
 	var addr string
+	var tinygo bool
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Build to WebAssembly and serve at :8080",
 		Long:  "Build the current project to WebAssembly and serve it over HTTP. Use 'gutter run dev' for hot reload.",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runServe(addr, false)
+			return runServe(addr, false, tinygo)
 		},
 	}
 	cmd.Flags().StringVarP(&addr, "addr", "a", ":8080", "address to serve on")
+	cmd.Flags().BoolVar(&tinygo, "tinygo", false, "compile with TinyGo (much smaller .wasm; requires tinygo on PATH)")
 
+	var devAddr string
+	var devTinygo bool
 	dev := &cobra.Command{
 		Use:   "dev",
 		Short: "Build, serve, and rebuild on file changes (with live reload)",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runServe(addr, true)
+			return runServe(devAddr, true, devTinygo)
 		},
 	}
-	dev.Flags().StringVarP(&addr, "addr", "a", ":8080", "address to serve on")
+	dev.Flags().StringVarP(&devAddr, "addr", "a", ":8080", "address to serve on")
+	dev.Flags().BoolVar(&devTinygo, "tinygo", false, "compile with TinyGo (much smaller .wasm; requires tinygo on PATH)")
 	cmd.AddCommand(dev)
 	return cmd
 }
@@ -52,9 +57,9 @@ const serveDir = "dist"
 // dev-mode client polls it and reloads when it changes.
 var buildCounter atomic.Int64
 
-func runServe(addr string, dev bool) error {
+func runServe(addr string, dev, tinygo bool) error {
 	printTitle("Initial build")
-	if err := bundleInto(serveDir, false); err != nil {
+	if err := bundleInto(serveDir, false, tinygo); err != nil {
 		return fmt.Errorf("build failed: %w", err)
 	}
 	buildCounter.Add(1)
@@ -67,27 +72,10 @@ func runServe(addr string, dev bool) error {
 			w.Header().Set("Cache-Control", "no-store")
 			fmt.Fprintf(w, "%d", buildCounter.Load())
 		})
-		mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-			// Intercept index.html so we can inject the reload script.
-			urlPath := strings.TrimPrefix(r.URL.Path, "/")
-			if urlPath == "" || strings.HasSuffix(urlPath, "/") {
-				urlPath += "index.html"
-			}
-			if strings.HasSuffix(urlPath, ".html") {
-				data, err := os.ReadFile(filepath.Join(serveDir, filepath.Clean(urlPath)))
-				if err == nil {
-					injected := injectReloadScript(string(data))
-					w.Header().Set("Content-Type", "text/html; charset=utf-8")
-					w.Header().Set("Cache-Control", "no-store")
-					_, _ = w.Write([]byte(injected))
-					return
-				}
-			}
-			http.FileServer(http.Dir(serveDir)).ServeHTTP(w, r)
-		})
-		go watchAndRebuild()
-	} else {
-		mux.Handle("/", http.FileServer(http.Dir(serveDir)))
+	}
+	mux.Handle("/", spaHandler(dev))
+	if dev {
+		go watchAndRebuild(tinygo)
 	}
 
 	if dev {
@@ -101,6 +89,63 @@ func runServe(addr string, dev bool) error {
 		printDim("(Ctrl-C to stop)")
 	}
 	return http.ListenAndServe(addr, mux)
+}
+
+// spaHandler wraps the static file server with two extras:
+//
+//  1. SPA fallback. If the requested path has no file extension and no file
+//     matches it on disk, serve index.html instead of 404. This is what makes
+//     deep links like /about or /user/42 work after a page reload — the
+//     client-side Router then takes over and renders the right route.
+//
+//  2. Dev-mode reload script injection. When dev is true, HTML responses
+//     (including the SPA fallback) get the polling snippet appended so the
+//     browser reloads after every successful rebuild.
+//
+// File requests that DO have an extension (.wasm, .js, .css, images) skip the
+// fallback and 404 normally when missing — masking those would hide real bugs.
+func spaHandler(dev bool) http.Handler {
+	fs := http.FileServer(http.Dir(serveDir))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clean := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
+		if clean == "." {
+			clean = "index.html"
+		} else if strings.HasSuffix(r.URL.Path, "/") {
+			clean = filepath.Join(clean, "index.html")
+		}
+		target := filepath.Join(serveDir, clean)
+
+		if filepath.Ext(clean) == "" {
+			if _, err := os.Stat(target); os.IsNotExist(err) {
+				serveHTML(w, r, filepath.Join(serveDir, "index.html"), dev)
+				return
+			}
+		}
+		if dev && strings.HasSuffix(clean, ".html") {
+			if _, err := os.Stat(target); err == nil {
+				serveHTML(w, r, target, true)
+				return
+			}
+		}
+		fs.ServeHTTP(w, r)
+	})
+}
+
+// serveHTML reads path, optionally injects the dev reload script, and writes
+// the body. Falls back to http.NotFound if the file can't be read.
+func serveHTML(w http.ResponseWriter, r *http.Request, path string, injectReload bool) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	body := string(data)
+	if injectReload {
+		body = injectReloadScript(body)
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = w.Write([]byte(body))
 }
 
 func mustCWD() string {
@@ -136,7 +181,7 @@ func injectReloadScript(html string) string {
 	return html + reloadSnippet
 }
 
-func watchAndRebuild() {
+func watchAndRebuild(tinygo bool) {
 	w, err := fsnotify.NewWatcher()
 	if err != nil {
 		printErr("watcher: %v", err)
@@ -169,7 +214,7 @@ func watchAndRebuild() {
 
 			printInfo("change detected — rebuilding")
 			start := time.Now()
-			if err := bundleInto(serveDir, false); err != nil {
+			if err := bundleInto(serveDir, false, tinygo); err != nil {
 				printErr("rebuild failed: %v", err)
 			} else {
 				buildCounter.Add(1)

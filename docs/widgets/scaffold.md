@@ -19,21 +19,23 @@ The recommended root of every Gutter app. It ties together the four big pieces o
 
 ```go
 type Scaffold struct {
-    Title  string
-    Theme  *themes.Theme
-    AppBar gutter.Widget
-    Body   gutter.Widget
-    Footer gutter.Widget
+    Title        string
+    Theme        *themes.Theme
+    AppBar       gutter.Widget
+    StickyAppBar bool
+    Body         gutter.Widget
+    Footer       gutter.Widget
 }
 ```
 
-| Field    | What it does                                                                 |
-| -------- | ---------------------------------------------------------------------------- |
-| `Title`  | Pushed to `document.title` (via `gutter.SetTitle`).                          |
-| `Theme`  | Mutates `ctx.Theme` for the whole subtree — wins over `gutter.WithTheme`.    |
-| `AppBar` | The top navigation strip. Use [`widgets.AppBar`](appbar.html).               |
-| `Body`   | Your main content. Gets `flex: 1` — takes the remaining vertical space.     |
-| `Footer` | Optional bottom strip. Renders below `Body`.                                 |
+| Field          | What it does                                                                 |
+| -------------- | ---------------------------------------------------------------------------- |
+| `Title`        | Pushed to `document.title` (via `gutter.SetTitle`).                          |
+| `Theme`        | Mutates `ctx.Theme` for the whole subtree — wins over `gutter.WithTheme`.    |
+| `AppBar`       | The top navigation strip. Use [`widgets.AppBar`](appbar.html).               |
+| `StickyAppBar` | Pin the AppBar to the viewport top while the body scrolls (CSS `position: sticky`). |
+| `Body`         | Your main content. Gets `flex: 1` — takes the remaining vertical space.     |
+| `Footer`       | Optional bottom strip. Renders below `Body`.                                 |
 
 Background and ink colors are pulled from the active theme's `Colors.Canvas` and `Colors.Ink`. Layout is `display: flex; flex-direction: column; min-height: 100%`, so a `Center` inside `Body` fills the viewport minus the chrome.
 
@@ -100,6 +102,26 @@ widgets.Scaffold{
     },
 }
 ```
+
+---
+
+## Sticky AppBar
+
+Long-form pages want the navigation strip to stay visible as the user scrolls. Set `StickyAppBar: true` and Scaffold wraps the bar in `position: sticky; top: 0; z-index: 900`:
+
+```go
+widgets.Scaffold{
+    Title:        "My App",
+    Theme:        themes.Apple,
+    StickyAppBar: true,
+    AppBar:       widgets.AppBar{Title: "My App"},
+    Body:         /* long scrollable column */,
+}
+```
+
+The sticky element stays in the normal flex flow at first; once the viewport scrolls past its initial position, it pins at the top. The z-index sits below the 1000 overlay tier so [Popup](popup.html), [Drawer](drawer.html), and [BottomSheet](bottomsheet.html) still cover the bar when open.
+
+If your page wraps the Scaffold in an extra scrollable container with `overflow: auto`, sticky pins to that container instead of the viewport — that's how CSS sticky positioning works. The default Scaffold scrolls at the document level, which is usually what you want.
 
 ---
 

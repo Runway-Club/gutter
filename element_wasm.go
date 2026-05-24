@@ -139,13 +139,20 @@ func reconcileChildren(parent js.Value, oldChildren []Element, newWidgets []Widg
 	// Pass 3: position. Walk backwards so each insertBefore uses the
 	// already-correctly-placed nextDom as its anchor. Freshly created
 	// elements have an undefined dom() until they are mounted in this loop.
+	//
+	// Skip the insertBefore call when the node is already in the right
+	// spot (its nextSibling === nextDom): per the DOM spec it's a no-op,
+	// but in practice moving an already-focused <input> through
+	// insertBefore on every reconcile blurs and refocuses it, and the
+	// browser's focus restore triggers scrollIntoView — which on a long
+	// page snaps scroll back to where the focused element lives.
 	nextDom := js.Null()
 	for i := len(result) - 1; i >= 0; i-- {
 		el := result[i]
 		current := el.dom()
 		if current.IsUndefined() || current.IsNull() {
 			el.mount(parent, nextDom, ctx)
-		} else {
+		} else if !current.Get("nextSibling").Equal(nextDom) {
 			parent.Call("insertBefore", current, nextDom)
 		}
 		nextDom = el.dom()
@@ -187,6 +194,9 @@ func (e *hostElement) mount(parent, before js.Value, ctx *BuildContext) {
 		childEl.mount(e.node, js.Null(), ctx)
 		e.children = append(e.children, childEl)
 	}
+	if e.host.OnMount != nil {
+		e.host.OnMount(e.node)
+	}
 }
 
 func (e *hostElement) update(newW Widget, ctx *BuildContext) {
@@ -204,9 +214,18 @@ func (e *hostElement) update(newW Widget, ctx *BuildContext) {
 	e.children = reconcileChildren(e.node, e.children, newHost.Children, ctx)
 	e.w = newW.(HostWidget)
 	e.host = newHost
+	if e.host.OnMount != nil {
+		// Treat update as a remount signal for hook-style widgets (Canvas
+		// re-paints when its size or paint callback changes). The hook
+		// fires after the DOM is reconciled so handlers see the new state.
+		e.host.OnMount(e.node)
+	}
 }
 
 func (e *hostElement) unmount() {
+	if e.host != nil && e.host.OnUnmount != nil {
+		e.host.OnUnmount(e.node)
+	}
 	for _, child := range e.children {
 		child.unmount()
 	}
@@ -230,12 +249,31 @@ func (e *hostElement) attachEvents(events map[string]func(Event)) {
 		cb := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
 			ev := Event{Type: n}
 			if len(args) > 0 {
-				target := args[0].Get("target")
+				raw := args[0]
+				target := raw.Get("target")
 				if !target.IsUndefined() && !target.IsNull() {
 					v := target.Get("value")
 					if !v.IsUndefined() && !v.IsNull() {
 						ev.Value = v.String()
 					}
+				}
+				// Pointer/mouse coordinates. clientX/clientY exist on
+				// MouseEvent and PointerEvent; offsetX/offsetY would be
+				// element-local but aren't part of the PointerEvent spec.
+				if x := raw.Get("clientX"); !x.IsUndefined() && !x.IsNull() {
+					ev.X = x.Float()
+				}
+				if y := raw.Get("clientY"); !y.IsUndefined() && !y.IsNull() {
+					ev.Y = y.Float()
+				}
+				if x := raw.Get("offsetX"); !x.IsUndefined() && !x.IsNull() {
+					ev.OffsetX = x.Float()
+				}
+				if y := raw.Get("offsetY"); !y.IsUndefined() && !y.IsNull() {
+					ev.OffsetY = y.Float()
+				}
+				if k := raw.Get("key"); !k.IsUndefined() && !k.IsNull() {
+					ev.Key = k.String()
 				}
 			}
 			h(ev)
@@ -357,11 +395,17 @@ func (e *statefulElement) mount(parent, before js.Value, ctx *BuildContext) {
 	e.parent = parent
 	e.ctx = ctx
 	e.state = e.w.CreateState()
-	if init, ok := e.state.(StateInitializer); ok {
-		init.InitState()
-	}
+	// Bind element and widget BEFORE InitState so the State can call SetState
+	// from inside InitState (e.g. to flip into a loading state after spawning
+	// a goroutine) and read its widget via Widget().
 	if binder, ok := e.state.(elementBinder); ok {
 		binder.bindElement(e)
+	}
+	if binder, ok := e.state.(widgetBinder); ok {
+		binder.bindWidget(e.w)
+	}
+	if init, ok := e.state.(StateInitializer); ok {
+		init.InitState()
 	}
 	childW := e.state.Build(ctx)
 	e.child = newElement(childW)
@@ -372,8 +416,15 @@ func (e *statefulElement) mount(parent, before js.Value, ctx *BuildContext) {
 // the same Go type. State is preserved; only the widget reference is updated.
 // The subtree is then rebuilt against the new widget's state.
 func (e *statefulElement) update(newW Widget, ctx *BuildContext) {
+	oldW := e.w
 	e.w = newW.(StatefulWidget)
 	e.ctx = ctx
+	if binder, ok := e.state.(widgetBinder); ok {
+		binder.bindWidget(e.w)
+	}
+	if upd, ok := e.state.(WidgetUpdater); ok {
+		upd.DidUpdateWidget(oldW)
+	}
 	e.rebuild()
 }
 

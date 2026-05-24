@@ -63,10 +63,20 @@ const indexHTMLTemplate = `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="utf-8">
+  <!-- base href="/" so relative script srcs (wasm_exec.js, app.wasm) resolve
+       from the site root even when the page is loaded at a deep route like
+       /user/42. Required for widgets.Router to survive page reloads. -->
+  <base href="/">
   <title>__NAME__</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@100..900&display=swap" rel="stylesheet">
+  <!-- Material Symbols (Outlined, Rounded, Sharp) for widgets.Icon. The four
+       axes (FILL, wght, GRAD, opsz) are exposed so widgets.Icon can set them
+       per glyph via font-variation-settings. Drop any family you don't use. -->
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Sharp:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet">
   <style>
     html, body { margin: 0; padding: 0; width: 100%; height: 100%; font-family: Lexend, system-ui, sans-serif; }
     #app { width: 100%; height: 100%; }
@@ -173,13 +183,17 @@ func runNew(name, modulePath string) error {
 	}
 
 	files := map[string]string{
-		"main.go":    strings.ReplaceAll(mainGoTemplate, "__NAME__", name),
-		"index.html": strings.ReplaceAll(indexHTMLTemplate, "__NAME__", name),
-		"go.mod":     strings.ReplaceAll(goModTemplate, "__MODULE__", modulePath),
-		".gitignore": gitignoreTemplate,
+		"main.go":           strings.ReplaceAll(mainGoTemplate, "__NAME__", name),
+		"index.html":        strings.ReplaceAll(indexHTMLTemplate, "__NAME__", name),
+		"go.mod":            strings.ReplaceAll(goModTemplate, "__MODULE__", modulePath),
+		".gitignore":        gitignoreTemplate,
+		"assets/.gitkeep":   "",
 	}
 	for fname, content := range files {
 		path := filepath.Join(name, fname)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", filepath.Dir(path), err)
+		}
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}

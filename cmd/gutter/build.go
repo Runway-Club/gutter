@@ -52,22 +52,24 @@ node_modules
 `
 
 func buildCmd() *cobra.Command {
+	var tinygo bool
 	cmd := &cobra.Command{
 		Use:   "build",
 		Short: "Build the current project into ./dist",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runBuild()
+			return runBuild(tinygo)
 		},
 	}
+	cmd.Flags().BoolVar(&tinygo, "tinygo", false, "compile with TinyGo (much smaller .wasm; requires tinygo on PATH)")
 	cmd.AddCommand(deployCmd())
 	return cmd
 }
 
-func runBuild() error {
+func runBuild(tinygo bool) error {
 	outDir := "dist"
 	printTitle("Building project")
-	if err := bundleInto(outDir, true); err != nil {
+	if err := bundleInto(outDir, true, tinygo); err != nil {
 		return err
 	}
 	fmt.Println()
@@ -80,15 +82,23 @@ func runBuild() error {
 // wasm_exec.js, and copies index.html and public/ when those exist in the
 // current directory. Set verbose=true for per-step logs (used by `gutter
 // build`); set it to false for quiet rebuilds inside `gutter run dev`.
-func bundleInto(outDir string, verbose bool) error {
+func bundleInto(outDir string, verbose, tinygo bool) error {
+	if tinygo {
+		if err := ensureTinygo(); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
-	if err := buildWasm(filepath.Join(outDir, "app.wasm")); err != nil {
+	if err := buildWasm(filepath.Join(outDir, "app.wasm"), tinygo); err != nil {
 		return fmt.Errorf("build failed: %w", err)
 	}
 	if verbose {
 		printOK("wrote %s", filepath.Join(outDir, "app.wasm"))
+	}
+	if err := bundleWorkers(outDir, verbose, tinygo); err != nil {
+		return err
 	}
 
 	if _, err := os.Stat("index.html"); err == nil {
@@ -102,7 +112,7 @@ func bundleInto(outDir string, verbose bool) error {
 		printWarn("no index.html found in current directory")
 	}
 
-	if err := ensureWasmExec(outDir); err != nil {
+	if err := ensureWasmExec(outDir, tinygo); err != nil {
 		return err
 	}
 	if verbose {
@@ -117,29 +127,44 @@ func bundleInto(outDir string, verbose bool) error {
 			printOK("copied public/ assets")
 		}
 	}
+	// ./assets/ is the conventional location for files that widgets reference
+	// via gutter.AssetURL (Image{Asset: "logo.png"} → "assets/logo.png").
+	// Copy the whole tree under dist/assets/ so the runtime URL resolves to a
+	// real file. Apps that prefer a CDN can call gutter.SetAssetBase to point
+	// elsewhere — in that case ./assets is still copied locally and ignored.
+	if info, err := os.Stat("assets"); err == nil && info.IsDir() {
+		if err := copyDir("assets", filepath.Join(outDir, "assets")); err != nil {
+			return fmt.Errorf("copy assets/: %w", err)
+		}
+		if verbose {
+			printOK("copied assets/")
+		}
+	}
 	return nil
 }
 
 func deployCmd() *cobra.Command {
 	var image string
 	var noBuild bool
+	var tinygo bool
 	cmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "Build to dist/, generate a Dockerfile, and build a Docker image",
 		Long:  "Builds the project, writes Dockerfile + nginx.conf if missing, then runs 'docker build'. Prints the push command when done.",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runDeploy(image, noBuild)
+			return runDeploy(image, noBuild, tinygo)
 		},
 	}
 	cmd.Flags().StringVarP(&image, "image", "i", "", "Docker image name (e.g. registry.example.com/my-app:v1)")
 	cmd.Flags().BoolVar(&noBuild, "no-build", false, "skip the dist/ build step (assumes ./dist exists)")
+	cmd.Flags().BoolVar(&tinygo, "tinygo", false, "compile with TinyGo (much smaller .wasm; requires tinygo on PATH)")
 	return cmd
 }
 
-func runDeploy(image string, noBuild bool) error {
+func runDeploy(image string, noBuild, tinygo bool) error {
 	if !noBuild {
-		if err := runBuild(); err != nil {
+		if err := runBuild(tinygo); err != nil {
 			return err
 		}
 	}
@@ -211,6 +236,48 @@ func defaultImageName() string {
 		return "gutter-app:latest"
 	}
 	return filepath.Base(wd) + ":latest"
+}
+
+// bundleWorkers compiles any sibling Go workers to WASM files inside
+// outDir so widgets.Worker{WASM: "..."} can load them. Two conventions
+// are recognized side-by-side:
+//
+//   - ./worker/         -> dist/worker.wasm
+//   - ./workers/<name>/ -> dist/workers/<name>.wasm
+//
+// Each must be a directory containing a `package main` that calls
+// gutter.RunWorker. If neither exists, this is a silent no-op.
+func bundleWorkers(outDir string, verbose, tinygo bool) error {
+	if info, err := os.Stat("worker"); err == nil && info.IsDir() {
+		out := filepath.Join(outDir, "worker.wasm")
+		if err := buildWasmPkg("./worker", out, tinygo); err != nil {
+			return fmt.Errorf("build worker: %w", err)
+		}
+		if verbose {
+			printOK("wrote %s", out)
+		}
+	}
+	entries, err := os.ReadDir("workers")
+	if err != nil {
+		return nil
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		srcDir := filepath.Join("workers", e.Name())
+		outFile := filepath.Join(outDir, "workers", e.Name()+".wasm")
+		if err := os.MkdirAll(filepath.Dir(outFile), 0o755); err != nil {
+			return err
+		}
+		if err := buildWasmPkg("./"+srcDir, outFile, tinygo); err != nil {
+			return fmt.Errorf("build %s: %w", srcDir, err)
+		}
+		if verbose {
+			printOK("wrote %s", outFile)
+		}
+	}
+	return nil
 }
 
 func copyDir(src, dst string) error {

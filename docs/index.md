@@ -81,7 +81,9 @@ func main() { gutter.RunApp(App{}) }
 | Understand how it works               | [Architecture](architecture.html)                              |
 | Build interactive screens             | [State Management](state-management.html)                      |
 | Switch or extend a theme              | [Themes](themes.html)                                          |
+| Ship static files with your app       | [Assets](assets.html)                                          |
 | Browse every widget                   | [Widgets](widgets/)                                            |
+| Use vendor-specific widgets           | [Community packages](community.html)                           |
 | Use the developer CLI                 | [CLI](cli.html)                                                |
 | Read annotated examples               | [Examples](examples.html)                                      |
 
@@ -89,4 +91,16 @@ func main() { gutter.RunApp(App{}) }
 
 ## Status
 
-Early prototype. Production-shaped API, single-pass reconciler, two real design systems (Apple, Meta) shipped as presets. Known gaps: no router, no animation framework, no image widget, no SSR — `SetState` is synchronous and unbatched.
+Early prototype with a fast-growing widget catalog. Production-shaped API, single-pass reconciler, two real design systems (Apple, Meta) shipped as presets. A `community/` tier for vendor-specific reusable widgets (Google sign-in, …) lives next to the core catalog.
+
+**Currently shipped**:
+
+- App shell: `Scaffold` (with `StickyAppBar`), `AppBar`, `Heading`, `Body`, `Caption`, `Link`, `Button`, `IconButton`, `Card`, `Surface`, `Badge`, `Image`, `Icon` (Material Symbols), `File` (file picker that reads bytes via FileReader).
+- Inputs: `Input` (13 HTML types — text, password, email, number, tel, url, search, date, time, datetime-local, month, week, color), `TextArea`, `Checkbox`, `Switch`, `Slider`, `Select[T]`, `RadioGroup[T]`. All controlled (declarative `Value`/`Checked`/`Selected` field is source of truth).
+- Layout: `Column`, `Row`, `Center`, `Padding`, `SizedBox`, `Container`, `Styled`, `Transform`, `List`, `ListBuilder` (virtualized 10k+ row list with DOM recycling).
+- Overlays: `Popup`, `Drawer`, `BottomSheet`.
+- Reactive: `Notifier[T]`/`Listenable[T]`, `ObserverBuilder[T]`, `AsyncBuilder[T]`, `AnimationController` + `AnimatedBuilder`, `Router` + `RouterView`.
+- Imperative: `Canvas` (typed 2D painter), `GestureDetector`, `Worker` (Web Worker with inline Go task).
+- Assets: `gutter.AssetURL`, configurable base, CLI copies `./assets/` to `dist/assets/`.
+
+**Known gaps**: no SSR, no tests, no devtools, `SetState` is synchronous and unbatched, `ListBuilder` requires fixed row heights, theme overrides per subtree need explicit `Scaffold` nesting (no InheritedWidget yet).
