@@ -1,5 +1,5 @@
 title: Gutter
-description: A Flutter-inspired declarative UI library for Go that compiles to WebAssembly.
+description: Gutter is a declarative web framework for Go that compiles to WebAssembly and drives the browser DOM directly.
 
 # Project pages live at https://<user>.github.io/<repo>/. Override these for a
 # custom domain (set url to "https://your.domain" and baseurl to "").
