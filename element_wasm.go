@@ -756,14 +756,29 @@ func (e *statefulElement) unmount() {
 //
 // WASM Go runs on the single JS event loop, so no locking is needed: enqueue
 // and flush never interleave.
+// There are two priorities. Urgent SetState (the default) drains on the next
+// microtask. Transition SetState — a SetState made inside Transition(fn) — drains
+// on a later macrotask (setTimeout 0), so it always yields to urgent work queued
+// in the meantime (e.g. a keystroke stays responsive while a transition rebuilds
+// a large filtered list). rebuild() is idempotent, so the rare element that sits
+// in both queues just rebuilds twice harmlessly.
 var (
-	rebuildQueue   []*statefulElement
-	rebuildQueued  = map[*statefulElement]bool{}
-	flushScheduled bool
-	flushFn        js.Func
+	rebuildQueue     []*statefulElement
+	rebuildQueued    = map[*statefulElement]bool{}
+	flushScheduled   bool
+	flushFn          js.Func
+	transitionQueue  []*statefulElement
+	transitionQueued = map[*statefulElement]bool{}
+	transitionSched  bool
+	transitionFn     js.Func
+	inTransition     bool // set while a Transition(fn) call runs
 )
 
 func enqueueRebuild(e *statefulElement) {
+	if inTransition {
+		enqueueTransition(e)
+		return
+	}
 	if rebuildQueued[e] {
 		return
 	}
@@ -782,6 +797,39 @@ func enqueueRebuild(e *statefulElement) {
 	js.Global().Call("queueMicrotask", flushFn)
 }
 
+func enqueueTransition(e *statefulElement) {
+	if transitionQueued[e] {
+		return
+	}
+	transitionQueued[e] = true
+	transitionQueue = append(transitionQueue, e)
+	if transitionSched {
+		return
+	}
+	transitionSched = true
+	if transitionFn.IsUndefined() {
+		transitionFn = js.FuncOf(func(js.Value, []js.Value) any {
+			flushTransitions()
+			return nil
+		})
+	}
+	// A macrotask runs after the microtask checkpoint, so any urgent rebuild
+	// queued before this fires drains first.
+	js.Global().Call("setTimeout", transitionFn, 0)
+}
+
+// Transition runs fn with its SetState calls marked low-priority: they drain on
+// a macrotask, after any urgent updates. Mirrors React's startTransition — wrap
+// state changes that can lag behind input (search filtering, tab switches):
+//
+//	gutter.Transition(func() { s.SetState(func() { s.query = q }) })
+func Transition(fn func()) {
+	prev := inTransition
+	inTransition = true
+	defer func() { inTransition = prev }()
+	fn()
+}
+
 func flushRebuilds() {
 	// Snapshot and reset before rebuilding: a rebuild may itself call SetState,
 	// which must land in the next cycle's queue, not this drain.
@@ -789,6 +837,16 @@ func flushRebuilds() {
 	rebuildQueue = nil
 	rebuildQueued = map[*statefulElement]bool{}
 	flushScheduled = false
+	for _, e := range queue {
+		e.rebuild()
+	}
+}
+
+func flushTransitions() {
+	queue := transitionQueue
+	transitionQueue = nil
+	transitionQueued = map[*statefulElement]bool{}
+	transitionSched = false
 	for _, e := range queue {
 		e.rebuild()
 	}

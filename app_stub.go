@@ -26,3 +26,7 @@ func MountInto(selector string, root Widget, opts ...Option) *App {
 func MountWhenVisible(selector string, root Widget, opts ...Option) {
 	panic("gutter: MountWhenVisible is only available when built with GOOS=js GOARCH=wasm")
 }
+
+// Transition just runs fn on host builds — there is no rebuild scheduler during
+// SSR, so the priority distinction is meaningful only under GOOS=js GOARCH=wasm.
+func Transition(fn func()) { fn() }

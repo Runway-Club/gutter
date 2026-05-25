@@ -412,6 +412,51 @@ func TestSetStateBatchesIntoOneRebuild(t *testing.T) {
 	}
 }
 
+// A transition SetState must not drain on the urgent microtask flush; it waits
+// for the (macrotask) transition flush.
+func TestTransitionDefersBehindUrgent(t *testing.T) {
+	parent := freshParent()
+	el := newElement(batchWidget{}).(*statefulElement)
+	el.mount(parent, js.Null(), testCtxVal)
+	st := el.state.(*batchState)
+
+	Transition(func() { st.SetState(func() {}) })
+	flushRebuilds() // urgent drain — must NOT touch the transition update
+	if st.builds != 1 {
+		t.Fatalf("urgent flush rebuilt a transition update (builds=%d, want 1)", st.builds)
+	}
+	flushTransitions()
+	if st.builds != 2 {
+		t.Fatalf("transition flush did not rebuild (builds=%d, want 2)", st.builds)
+	}
+}
+
+// An urgent update flushes on the microtask even while a transition is pending
+// on another element — urgent work is never blocked by a transition.
+func TestUrgentFlushesWhileTransitionPending(t *testing.T) {
+	parent := freshParent()
+	a := newElement(batchWidget{}).(*statefulElement)
+	a.mount(parent, js.Null(), testCtxVal)
+	b := newElement(batchWidget{}).(*statefulElement)
+	b.mount(parent, js.Null(), testCtxVal)
+	sa, sb := a.state.(*batchState), b.state.(*batchState)
+
+	Transition(func() { sa.SetState(func() {}) }) // low priority
+	sb.SetState(func() {})                        // urgent
+
+	flushRebuilds()
+	if sb.builds != 2 {
+		t.Fatalf("urgent update not flushed on microtask (builds=%d, want 2)", sb.builds)
+	}
+	if sa.builds != 1 {
+		t.Fatalf("transition flushed on the urgent microtask (builds=%d, want 1)", sa.builds)
+	}
+	flushTransitions()
+	if sa.builds != 2 {
+		t.Fatalf("transition not flushed (builds=%d, want 2)", sa.builds)
+	}
+}
+
 func TestUnmountedElementNotRebuilt(t *testing.T) {
 	parent := freshParent()
 	el := newElement(batchWidget{}).(*statefulElement)
