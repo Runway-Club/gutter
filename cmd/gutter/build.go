@@ -147,19 +147,39 @@ func deployCmd() *cobra.Command {
 	var image string
 	var noBuild bool
 	var tinygo bool
+	var pureGo bool
 	cmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "Build to dist/, generate a Dockerfile, and build a Docker image",
-		Long:  "Builds the project, writes Dockerfile + nginx.conf if missing, then runs 'docker build'. Prints the push command when done.",
+		Long:  "Builds the project (defaulting to TinyGo for a smaller production bundle when available), writes Dockerfile + nginx.conf if missing, then runs 'docker build'. Prints the push command when done.",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runDeploy(image, noBuild, tinygo)
+			return runDeploy(image, noBuild, resolveDeployTinygo(tinygo, pureGo))
 		},
 	}
 	cmd.Flags().StringVarP(&image, "image", "i", "", "Docker image name (e.g. registry.example.com/my-app:v1)")
 	cmd.Flags().BoolVar(&noBuild, "no-build", false, "skip the dist/ build step (assumes ./dist exists)")
-	cmd.Flags().BoolVar(&tinygo, "tinygo", false, "compile with TinyGo (much smaller .wasm; requires tinygo on PATH)")
+	cmd.Flags().BoolVar(&tinygo, "tinygo", false, "force TinyGo (default: auto — used when available)")
+	cmd.Flags().BoolVar(&pureGo, "pure-go", false, "force the standard Go toolchain, skipping TinyGo auto-detection")
 	return cmd
+}
+
+// resolveDeployTinygo picks the production compiler. Production defaults to
+// TinyGo when it's on PATH (much smaller bundle); --pure-go opts out, --tinygo
+// forces it. A missing TinyGo falls back to the standard toolchain with a hint.
+func resolveDeployTinygo(tinygo, pureGo bool) bool {
+	if pureGo {
+		return false
+	}
+	if tinygo {
+		return true
+	}
+	if _, err := exec.LookPath("tinygo"); err == nil {
+		printInfo("using TinyGo for a smaller production bundle (use --pure-go to opt out)")
+		return true
+	}
+	printInfo("TinyGo not found; building with the standard Go toolchain. Install TinyGo for a much smaller production bundle.")
+	return false
 }
 
 func runDeploy(image string, noBuild, tinygo bool) error {

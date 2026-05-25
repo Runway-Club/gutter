@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Gutter islands</title>
+  <style>
+    html, body { margin: 0; font-family: system-ui, sans-serif; }
+    main { max-width: 640px; margin: 0 auto; padding: 24px; }
+    .spacer { height: 90vh; }
+    .island { padding: 16px 0; }
+  </style>
+  <script src="wasm_exec.js"></script>
+</head>
+<body>
+  <main>
+    <h1>A plain HTML page</h1>
+    <p>This page is static — no framework renders it. Only the two interactive
+       widgets below are Gutter "islands". app.wasm is fetched lazily the first
+       time an island nears the viewport, so the page itself costs zero WASM.</p>
+
+    <div class="island"><div id="island-counter" data-gutter-island></div></div>
+
+    <div class="spacer"></div>
+    <p>…lots of static content…</p>
+
+    <div class="island"><div id="island-likes" data-gutter-island></div></div>
+  </main>
+
+  <script>
+    // Lazy island loader: fetch + boot app.wasm once, on first island visibility.
+    let booted = false;
+    function boot() {
+      if (booted) return;
+      booted = true;
+      const go = new Go();
+      WebAssembly.instantiateStreaming(fetch("app.wasm"), go.importObject).then((r) => go.run(r.instance));
+    }
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) { boot(); io.disconnect(); break; }
+      }
+    });
+    document.querySelectorAll("[data-gutter-island]").forEach((el) => io.observe(el));
+  </script>
+</body>
+</html>

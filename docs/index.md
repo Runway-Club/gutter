@@ -34,9 +34,7 @@ import (
     "github.com/Runway-Club/gutter/widgets"
 )
 
-type App struct{}
-
-func (App) Build(ctx *gutter.BuildContext) gutter.Widget {
+func Root() gutter.Widget {
     return widgets.Scaffold{
         Title: "Hello, Gutter!",
         Theme: themes.Apple,
@@ -58,14 +56,17 @@ func (App) Build(ctx *gutter.BuildContext) gutter.Widget {
     }
 }
 
-func main() { gutter.RunApp(App{}) }
+// One entry for both modes: `gutter run` serves it client-side,
+// `gutter run --ssr` runs the same program as a server-rendering server.
+func main() { gutter.Serve(gutter.Config{Root: Root}) }
 ```
 
 ---
 
 ## Why Gutter?
 
-- **One language, top to bottom.** Write your server in Go and your UI in Go. Share types and validation logic across the boundary instead of duplicating them in TypeScript.
+- **One language, top to bottom.** Write your server in Go and your UI in Go. Share types and validation logic across the boundary instead of duplicating them in TypeScript — including **type-safe RPC** (`rpc.Handle` / `rpc.Call[Req, Res]`) where changing a struct field is a compile error on both sides.
+- **SSR + hydration in one `main`.** `gutter.Serve(gutter.Config{Root: Root})` runs client-side with `gutter run` and server-rendered with `gutter run --ssr` — same code. Server-rendered HTML paints instantly (great FCP, SEO), then the wasm hydrates it into a live app.
 - **No `node_modules`.** No npm, no webpack, no bundler config, no `node_modules` to audit or keep patched. One `go.mod` and the `gutter` CLI are the whole toolchain.
 - **Fast, small bundles.** Opt into TinyGo with `--tinygo` for **4–8× smaller** WebAssembly — a counter app drops from ~2.8 MB to ~340 KB — so the browser downloads and instantiates less before first paint.
 - **Heavy work stays on the client.** Offload CPU-bound tasks to a Web Worker with `Worker` + `gutter.NewWorkerTask` — parse files, crunch data, run long computations — without blocking the UI thread, all in Go.
@@ -81,6 +82,7 @@ func main() { gutter.RunApp(App{}) }
 | If you want to…                       | Read                                                           |
 | ------------------------------------- | -------------------------------------------------------------- |
 | Install Gutter and run your first app | [Getting Started](getting-started.html)                        |
+| Server-render + call the server in Go | [SSR & full-stack](fullstack.html)                             |
 | Understand how it works               | [Architecture](architecture.html)                              |
 | Build interactive screens             | [State Management](state-management.html)                      |
 | Switch or extend a theme              | [Themes](themes.html)                                          |
@@ -102,8 +104,11 @@ Early prototype with a fast-growing widget catalog. Production-shaped API, singl
 - Inputs: `Input` (13 HTML types — text, password, email, number, tel, url, search, date, time, datetime-local, month, week, color), `TextArea`, `Checkbox`, `Switch`, `Slider`, `Select[T]`, `RadioGroup[T]`. All controlled (declarative `Value`/`Checked`/`Selected` field is source of truth).
 - Layout: `Column`, `Row`, `Center`, `Padding`, `SizedBox`, `Container`, `Styled`, `Transform`, `List`, `ListBuilder` (virtualized 10k+ row list with DOM recycling).
 - Overlays: `Popup`, `Drawer`, `BottomSheet`.
-- Reactive: `Notifier[T]`/`Listenable[T]`, `ObserverBuilder[T]`, `AsyncBuilder[T]`, `AnimationController` + `AnimatedBuilder`, `Router` + `RouterView`.
+- Reactive: `Notifier[T]`/`Listenable[T]`, `ObserverBuilder[T]`, `AsyncBuilder[T]`, `AnimationController` + `AnimatedBuilder`, `Router` + `RouterView` (with query parsing).
+- Forms: `Form` / `FormField` + composable `Validator`s (`Required`, `Email`, `Pattern`, …).
 - Imperative: `Canvas` (typed 2D painter), `GestureDetector`, `Worker` (Web Worker with inline Go task).
+- Full-stack: **SSR** (`RenderToHTML` / `ServeSSR`) + **hydration** (`WithHydrate`), the one-`main` `gutter.Serve`, typed **RPC** (`rpc` package), **islands** (`MountInto`), and **DI** (`Provider[T]` / `DependOn[T]`).
 - Assets: `gutter.AssetURL`, configurable base, CLI copies `./assets/` to `dist/assets/`.
+- Tested across three layers (host unit, reconciler-vs-DOM in a real browser, Playwright e2e); `SetState` is microtask-batched.
 
-**Known gaps**: no SSR, no tests, no devtools, `SetState` is synchronous and unbatched, `ListBuilder` requires fixed row heights, theme overrides per subtree need explicit `Scaffold` nesting (no InheritedWidget yet).
+**Known gaps**: no devtools; `ListBuilder` requires fixed row heights; the router has no nested routes/guards; SSR/hydration is first-generation (full-subtree remount on tag mismatch, no `<head>` collection); ARIA coverage is partial (semantic `Heading`/`Link`/`Image`/`IconButton`, but `Body`/`Badge` are still `<span>`s).

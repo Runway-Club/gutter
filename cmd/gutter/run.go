@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -20,17 +21,22 @@ import (
 func runCmd() *cobra.Command {
 	var addr string
 	var tinygo bool
+	var ssr bool
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Build to WebAssembly and serve at :8080",
-		Long:  "Build the current project to WebAssembly and serve it over HTTP. Use 'gutter run dev' for hot reload.",
+		Long:  "Build the current project to WebAssembly and serve it over HTTP. Use 'gutter run dev' for hot reload, or --ssr for server-side rendering.",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if ssr {
+				return runSSR(addr, tinygo)
+			}
 			return runServe(addr, false, tinygo)
 		},
 	}
 	cmd.Flags().StringVarP(&addr, "addr", "a", ":8080", "address to serve on")
 	cmd.Flags().BoolVar(&tinygo, "tinygo", false, "compile with TinyGo (much smaller .wasm; requires tinygo on PATH)")
+	cmd.Flags().BoolVar(&ssr, "ssr", false, "server-side render: build wasm into dist, then run ./server (which calls gutter.ServeSSR)")
 
 	var devAddr string
 	var devTinygo bool
@@ -89,6 +95,27 @@ func runServe(addr string, dev, tinygo bool) error {
 		printDim("(Ctrl-C to stop)")
 	}
 	return http.ListenAndServe(addr, mux)
+}
+
+// runSSR builds the WASM client into dist/, then runs the SAME program for the
+// host — its `func main() { gutter.Serve(gutter.Config{...}) }` becomes the SSR
+// server (renders Root() per request, mounts the RPC handlers, serves the
+// freshly-built wasm assets from dist/ for hydration). addr/dist are passed via
+// env so gutter.Serve honors them.
+func runSSR(addr string, tinygo bool) error {
+	printTitle("Initial build")
+	if err := bundleInto(serveDir, false, tinygo); err != nil {
+		return fmt.Errorf("build failed: %w", err)
+	}
+	printOK("wasm bundle ready in %s", styleAccent.Render("./"+serveDir+"/"))
+
+	printTitle("SSR server")
+	printOK("serving on %s", styleAccent.Render("http://localhost"+addr))
+	printDim("(running the project's own main built for host — it must call gutter.Serve; Ctrl-C to stop)")
+	c := exec.Command("go", "run", ".")
+	c.Env = append(os.Environ(), "GUTTER_ADDR="+addr, "GUTTER_DIST="+serveDir)
+	c.Stdout, c.Stderr, c.Stdin = os.Stdout, os.Stderr, os.Stdin
+	return c.Run()
 }
 
 // spaHandler wraps the static file server with two extras:

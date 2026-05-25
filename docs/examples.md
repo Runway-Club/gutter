@@ -6,13 +6,15 @@ nav_order: 7
 # Examples
 {: .no_toc }
 
-Five runnable example apps ship in [`examples/`](https://github.com/Runway-Club/gutter/tree/main/examples), in increasing order of surface area:
+Runnable example apps ship in [`examples/`](https://github.com/Runway-Club/gutter/tree/main/examples), in increasing order of surface area:
 
 - **counter** — minimal `StatefulWidget` + `SetState`, ~70 lines.
 - **router** — `Router` + `RouterView` with `:param` capture and browser history.
 - **kanban** — three-column drag-and-drop board built on `Controller[T]` + `Draggable[T]` + `DropTarget[T]` + `DragOverlay[T]`.
 - **playground** — a small sandbox for trying things out.
 - **showcase** — the full catalog tour. Every widget the framework ships, plus the `community/login_with_google` button. Use this as a reference for "how do I use widget X?".
+- **fullstack** — SSR + typed RPC via the one-`main` `gutter.Serve` model: a shared `api` package and a single `main.go` the CLI builds as both the wasm client and the SSR+`/rpc` server. See the [full-stack guide](fullstack.html).
+- **islands** — two independent Gutter widgets embedded in a static HTML page that lazy-loads `app.wasm` on first island visibility (`MountInto`).
 
 They're not just demos — they're the smallest end-to-end illustration of every concept in the framework.
 {: .fs-6 .fw-300 }

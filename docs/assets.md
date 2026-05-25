@@ -62,7 +62,7 @@ Override the base URL at startup, **before** any widget renders:
 ```go
 func main() {
     gutter.SetAssetBase("https://cdn.example.com/myapp/v3/")
-    gutter.RunApp(App{})
+    gutter.Serve(gutter.Config{Root: Root})
 }
 ```
 

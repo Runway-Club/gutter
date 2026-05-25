@@ -19,6 +19,11 @@ type Element interface {
 	// before is non-null, the new DOM is inserted before that sibling;
 	// otherwise it is appended.
 	mount(parent, before js.Value, ctx *BuildContext)
+	// hydrate adopts an existing server-rendered DOM node at this tree position
+	// instead of creating one: it wires events/lifecycle and recurses into the
+	// existing children, preserving node identity. A structural mismatch falls
+	// back to a fresh mount of that subtree.
+	hydrate(node js.Value, ctx *BuildContext)
 	// update reconciles this element with newW, mutating DOM in place. The
 	// caller must already have determined via canUpdate that newW is
 	// compatible with the current widget.
@@ -205,6 +210,62 @@ func (e *hostElement) mount(parent, before js.Value, ctx *BuildContext) {
 	if e.host.OnMount != nil {
 		e.host.OnMount(e.node)
 	}
+}
+
+func (e *hostElement) hydrate(node js.Value, ctx *BuildContext) {
+	e.host = e.w.Host()
+	e.parent = node.Get("parentNode")
+	// Tag mismatch → the client built a different element than the server.
+	// Can't adopt: mount a fresh node in place and drop the stale SSR one.
+	if !sameTag(node, e.host.Tag) {
+		e.mount(e.parent, node, ctx)
+		e.parent.Call("removeChild", node)
+		return
+	}
+	e.node = node
+	// Re-apply attrs/style/text idempotently so the client is authoritative
+	// even if the server markup drifted; then strip the SSR-only markers.
+	applyAttrs(e.node, nil, e.host.Attrs)
+	applyStyle(e.node, nil, e.host.Style)
+	e.node.Call("removeAttribute", "data-gutter-h")
+	e.node.Call("removeAttribute", "data-gutter-key")
+	if e.host.Text != "" && e.node.Get("textContent").String() != e.host.Text {
+		e.node.Set("textContent", e.host.Text)
+	}
+	e.syncEvents(e.host.Events)
+	// Adopt children positionally: every widget resolves to exactly one DOM
+	// element, so host children line up 1:1 with node.children (element-only,
+	// so SSR whitespace text nodes — of which our renderer emits none — are
+	// ignored regardless).
+	existing := e.node.Get("children")
+	count := existing.Get("length").Int()
+	e.children = make([]Element, 0, len(e.host.Children))
+	for i, childW := range e.host.Children {
+		childEl := newElement(childW)
+		if i < count {
+			childEl.hydrate(existing.Index(i), ctx)
+		} else {
+			childEl.mount(e.node, js.Null(), ctx) // server had fewer children
+		}
+		e.children = append(e.children, childEl)
+	}
+	for i := count - 1; i >= len(e.host.Children); i-- { // server had extras
+		e.node.Call("removeChild", existing.Index(i))
+	}
+	if e.host.OnMount != nil {
+		e.host.OnMount(e.node)
+	}
+}
+
+func sameTag(node js.Value, tag string) bool {
+	if tag == "" {
+		tag = "div"
+	}
+	tn := node.Get("tagName")
+	if tn.IsUndefined() || tn.IsNull() {
+		return false
+	}
+	return strings.EqualFold(tn.String(), tag)
 }
 
 func (e *hostElement) update(newW Widget, ctx *BuildContext) {
@@ -422,15 +483,37 @@ func (e *statelessElement) key() any { return widgetKey(e.w) }
 
 func (e *statelessElement) mount(parent, before js.Value, ctx *BuildContext) {
 	e.parent = parent
+	saved := ctx.inherited
+	if p, ok := e.w.(inheritedProvider); ok {
+		ctx.inherited = p.provideInto(ctx.inherited)
+	}
 	childW := e.w.Build(ctx)
 	e.child = newElement(childW)
 	e.child.mount(parent, before, ctx)
+	ctx.inherited = saved
+}
+
+func (e *statelessElement) hydrate(node js.Value, ctx *BuildContext) {
+	e.parent = node.Get("parentNode")
+	saved := ctx.inherited
+	if p, ok := e.w.(inheritedProvider); ok {
+		ctx.inherited = p.provideInto(ctx.inherited)
+	}
+	childW := e.w.Build(ctx)
+	e.child = newElement(childW)
+	e.child.hydrate(node, ctx) // DOM-transparent: the child owns this node
+	ctx.inherited = saved
 }
 
 func (e *statelessElement) update(newW Widget, ctx *BuildContext) {
 	e.w = newW.(StatelessWidget)
+	saved := ctx.inherited
+	if p, ok := e.w.(inheritedProvider); ok {
+		ctx.inherited = p.provideInto(ctx.inherited)
+	}
 	newChildW := e.w.Build(ctx)
 	e.child = reconcile(e.parent, e.child, newChildW, ctx)
+	ctx.inherited = saved
 }
 
 func (e *statelessElement) unmount() {
@@ -450,6 +533,11 @@ type statefulElement struct {
 	state   State
 	child   Element
 	mounted bool
+	// scope is the ambient dependency scope (Provider values) visible at this
+	// element's position, captured during top-down passes so an isolated
+	// SetState rebuild — which doesn't re-run ancestor Providers — can restore
+	// it before calling Build. nil when no Provider is in scope.
+	scope map[reflect.Type]any
 }
 
 func (e *statefulElement) widget() Widget           { return e.w }
@@ -465,6 +553,7 @@ func (e *statefulElement) key() any { return widgetKey(e.w) }
 func (e *statefulElement) mount(parent, before js.Value, ctx *BuildContext) {
 	e.parent = parent
 	e.ctx = ctx
+	e.scope = ctx.inherited // capture ambient scope for later isolated rebuilds
 	e.state = e.w.CreateState()
 	// Bind element and widget BEFORE InitState so the State can call SetState
 	// from inside InitState (e.g. to flip into a loading state after spawning
@@ -484,6 +573,26 @@ func (e *statefulElement) mount(parent, before js.Value, ctx *BuildContext) {
 	e.mounted = true
 }
 
+func (e *statefulElement) hydrate(node js.Value, ctx *BuildContext) {
+	e.parent = node.Get("parentNode")
+	e.ctx = ctx
+	e.scope = ctx.inherited
+	e.state = e.w.CreateState()
+	if binder, ok := e.state.(elementBinder); ok {
+		binder.bindElement(e)
+	}
+	if binder, ok := e.state.(widgetBinder); ok {
+		binder.bindWidget(e.w)
+	}
+	if init, ok := e.state.(StateInitializer); ok {
+		init.InitState()
+	}
+	childW := e.state.Build(ctx)
+	e.child = newElement(childW)
+	e.child.hydrate(node, ctx)
+	e.mounted = true
+}
+
 // update is called when an ancestor rebuild produces a new widget instance of
 // the same Go type. State is preserved; only the widget reference is updated.
 // The subtree is then rebuilt against the new widget's state.
@@ -491,6 +600,7 @@ func (e *statefulElement) update(newW Widget, ctx *BuildContext) {
 	oldW := e.w
 	e.w = newW.(StatefulWidget)
 	e.ctx = ctx
+	e.scope = ctx.inherited // refresh: a top-down pass carries the current scope
 	if binder, ok := e.state.(widgetBinder); ok {
 		binder.bindWidget(e.w)
 	}
@@ -506,8 +616,14 @@ func (e *statefulElement) rebuild() {
 	if !e.mounted {
 		return
 	}
+	// Restore the ambient scope this element lives under: an isolated SetState
+	// rebuild doesn't re-run ancestor Providers, so without this DependOn would
+	// see an empty (or wrong) scope.
+	saved := e.ctx.inherited
+	e.ctx.inherited = e.scope
 	newChildW := e.state.Build(e.ctx)
 	e.child = reconcile(e.parent, e.child, newChildW, e.ctx)
+	e.ctx.inherited = saved
 }
 
 // scheduleRebuild is the SetState path: rather than rebuilding synchronously,

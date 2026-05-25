@@ -13,9 +13,7 @@ import (
     "github.com/Runway-Club/gutter/widgets"
 )
 
-type App struct{}
-
-func (App) Build(ctx *gutter.BuildContext) gutter.Widget {
+func Root() gutter.Widget {
     return widgets.Scaffold{
         Title: "Hello",
         Theme: themes.Apple,
@@ -45,8 +43,10 @@ func (App) Build(ctx *gutter.BuildContext) gutter.Widget {
     }
 }
 
+// One entry point. `gutter run` serves this client-side; `gutter run --ssr`
+// runs the same program as a server-rendering server.
 func main() {
-    gutter.RunApp(App{})
+    gutter.Serve(gutter.Config{Root: Root})
 }
 ```
 
@@ -54,9 +54,10 @@ The widget catalog is theme-aware by default — pick a variant, the theme picks
 
 | Package | What's in it |
 | --- | --- |
-| `github.com/Runway-Club/gutter` | Framework core: `Widget`, `Host`, `State`, `BuildContext`, runtime, `RunApp`, options. |
+| `github.com/Runway-Club/gutter` | Framework core: `Widget`, `Host`, `State`, `BuildContext`, runtime, `RunApp`, `Serve`/`Config` (one-`main` CSR+SSR entry), `RenderToHTML`/`ServeSSR` (SSR), `WithHydrate`, `MountInto` (islands), `Provider`/`DependOn` (DI), options. |
+| `github.com/Runway-Club/gutter/rpc` | Typed, codegen-free client↔server RPC: `rpc.Handle(fn)` (server) and `rpc.Call[Req, Res](ctx, req)` (client), keyed by the request type so both sides stay in sync. |
 | `github.com/Runway-Club/gutter/themes` | Theme data — `Theme`, `Colors`, `Typography`, ...; ready-made `themes.Apple`, `themes.Meta`, `themes.Neutral`. |
-| `github.com/Runway-Club/gutter/widgets` | The single widget catalog. Themed widgets (`Heading`, `Body`, `Button`, `Card`, `Surface`, `Input`, `Badge`, `Link`) read the active theme; layout primitives (`Column`, `Row`, `Center`, `Padding`, `SizedBox`) and escape-hatches (`Styled`, `Text`, `Container`) carry no theme dependency. |
+| `github.com/Runway-Club/gutter/widgets` | The single widget catalog. Themed widgets (`Heading`, `Body`, `Button`, `Card`, `Surface`, `Input`, `Badge`, `Link`, `Form`) read the active theme; layout primitives (`Column`, `Row`, `Center`, `Padding`, `SizedBox`) and escape-hatches (`Styled`, `Text`, `Container`) carry no theme dependency. |
 
 ## Installing the CLI
 
@@ -80,16 +81,46 @@ gutter run
 
 Then open <http://localhost:8080>.
 
+## Server-side rendering & full-stack
+
+The scaffold's `main` calls `gutter.Serve`, so the **same program** runs two ways:
+
+```sh
+gutter run          # client-side rendering (CSR)
+gutter run --ssr    # server-rendered HTML + hydration, from the same code
+```
+
+With `--ssr`, the server renders `Root()` to HTML (fast first paint, SEO), then the wasm hydrates it. Call the server from the client with type-safe RPC — sharing Go structs across the boundary, no codegen:
+
+```go
+// shared types (imported by both sides)
+type AddRequest struct{ A, B int }
+type AddResponse struct{ Sum int }
+
+// server: register once in Config.RPC
+rpc.Handle(func(ctx context.Context, r AddRequest) (AddResponse, error) {
+    return AddResponse{Sum: r.A + r.B}, nil
+})
+
+// client: call it — route derived from the type, no URL to keep in sync
+res, _ := rpc.Call[AddRequest, AddResponse](ctx, AddRequest{A: 2, B: 40}) // res.Sum == 42
+```
+
+See the [full-stack guide](docs/fullstack.md) and `examples/fullstack`.
+
 ## CLI
 
-| Command          | What it does                                                       |
-| ---------------- | ------------------------------------------------------------------ |
-| `gutter new <n>` | Scaffold a project (`main.go`, `index.html`, `go.mod`)             |
-| `gutter run`     | Build the current dir as WASM, copy `wasm_exec.js`, serve on :8080 |
-| `gutter build`   | Build a production-ready bundle into `./dist`                      |
+| Command            | What it does                                                       |
+| ------------------ | ------------------------------------------------------------------ |
+| `gutter new <n>`   | Scaffold a project (`main.go`, `index.html`, `go.mod`)             |
+| `gutter run`       | Build the current dir as WASM, copy `wasm_exec.js`, serve on :8080 |
+| `gutter run dev`   | Same as `run`, plus rebuild + browser reload on save               |
+| `gutter run --ssr` | Build the wasm, then run your `gutter.Serve` program as an SSR server |
+| `gutter build`     | Build a production-ready bundle into `./dist`                      |
+| `gutter build deploy` | Build (TinyGo by default), generate Dockerfile, run `docker build` |
 
 `wasm_exec.js` is copied from `$GOROOT/lib/wasm/` (Go 1.24+) or
-`$GOROOT/misc/wasm/` (older).
+`$GOROOT/misc/wasm/` (older). Pass `--tinygo` to `build`/`run` for a much smaller bundle.
 
 ## Themes
 
@@ -103,10 +134,10 @@ options uses it.
 | `themes.Meta` | Hardware merchandiser — black-pill marketing primary + cobalt commerce primary, 32px rounded photographic cards. |
 | `themes.Neutral` | Lexend-only neutral fallback for tests / brand-agnostic apps. |
 
-Switch themes at app startup:
+Switch themes at app startup (or just set `Theme:` on your `Scaffold`):
 
 ```go
-gutter.RunApp(MyApp{}, gutter.WithTheme(themes.Meta))
+gutter.Serve(gutter.Config{Root: Root, Theme: themes.Meta})
 ```
 
 The same widget tree renders differently under each theme: button variants,
@@ -232,11 +263,9 @@ the middle.
 
 ## Status
 
-Early prototype. Known gaps:
+Production-shaped and growing. Shipped: full widget catalog (incl. `Image`, `Router`, animation, forms, virtualized lists), two design systems, microtask-batched `SetState`, **SSR + hydration**, the one-`main` `gutter.Serve` model, **typed full-stack RPC**, **islands**, **DI** (`Provider`/`DependOn`), and a three-layer test suite (host unit, reconciler-vs-DOM in a real browser, Playwright e2e).
 
-- `SetState` is synchronous and unbatched.
-- No `Image`, no routing, no theming, no animation.
-- No tests; WASM tests need a browser harness.
+Known gaps: no devtools; `ListBuilder` needs fixed row heights; router has no nested routes/guards; SSR/hydration is first-generation; partial ARIA coverage. See [`ROADMAP.md`](ROADMAP.md).
 
 ## License
 

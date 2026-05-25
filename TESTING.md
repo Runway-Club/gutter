@@ -22,12 +22,14 @@ go test ./...              # fast
 go test -race -cover ./... # what CI runs
 ```
 
-No setup. These run anywhere `go` runs.
+No setup. These run anywhere `go` runs. This layer also covers **SSR**: `ssr_test.go` asserts `RenderToHTML` output (text/attrs/escaping/void elements/hydration markers/stateful `InitState`), `ssr_server_test.go` exercises `SSRHandler` through `net/http/httptest`, and `widgets/ssr_test.go` renders the real themed catalog on the host.
 
 ## Layer 2 — WASM runtime tests
 
 These are normal `_test.go` files tagged `//go:build js && wasm` (e.g.
-`element_wasm_test.go`). The Go toolchain runs a `GOOS=js GOARCH=wasm` test
+`element_wasm_test.go` for the reconciler and `hydrate_wasm_test.go` for SSR
+hydration — node-identity preservation, click-after-hydrate, tag-mismatch
+fallback). The Go toolchain runs a `GOOS=js GOARCH=wasm` test
 binary through an exec wrapper named `go_js_wasm_exec`; we point that at
 [`wasmbrowsertest`](https://github.com/agnivade/wasmbrowsertest), which loads
 the binary into headless Chrome.

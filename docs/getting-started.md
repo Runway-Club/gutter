@@ -33,7 +33,7 @@ This installs the `gutter` binary into `$GOBIN` (or `$GOPATH/bin`). Make sure th
 
 ```sh
 gutter --version
-# gutter version 0.2.0
+# gutter version 0.5.0
 ```
 
 If you are working from a local clone of the repo instead, build the CLI from source:
@@ -61,10 +61,10 @@ myapp/
 ├── .gitignore     # Ignores ./dist/ and any stray top-level build artifacts
 ├── go.mod         # Go module declaration (pinned to the latest Gutter release)
 ├── index.html     # HTML host page (loads Lexend + wasm_exec.js + your app)
-└── main.go        # Your app — Build a widget tree, call RunApp
+└── main.go        # Your app — a Root() widget builder + gutter.Serve
 ```
 
-After writing them, the CLI runs `go get github.com/Runway-Club/gutter@latest` inside the new project, so `go.mod` is pinned to the current published version (no manual `go mod tidy` needed). The `main.go` it writes is a complete, runnable "Hello, Gutter!" — a `Scaffold` with an `AppBar`, a centered `Card`, a `Heading`, a `Body`, and a primary `Button`.
+After writing them, the CLI runs `go get github.com/Runway-Club/gutter@latest` inside the new project, so `go.mod` is pinned to the current published version (no manual `go mod tidy` needed). The `main.go` it writes is a complete, runnable "Hello, Gutter!" — a `Scaffold` with an `AppBar`, a centered `Card`, a `Heading`, a `Body`, and a primary `Button` — wired through `gutter.Serve`, so the **same project runs client-side (`gutter run`) or server-side (`gutter run --ssr`)** with no changes.
 
 > **Working from a local checkout?** `gutter new` does not emit a `replace` directive. If your `go.mod` should point at your local Gutter clone instead of the published module, add the directive yourself:
 >
@@ -103,9 +103,9 @@ import (
     "github.com/Runway-Club/gutter/widgets"
 )
 
-type App struct{}
-
-func (App) Build(ctx *gutter.BuildContext) gutter.Widget {
+// Root builds the app's UI. gutter.Serve calls it on the client to mount/hydrate
+// and on the server to render HTML (gutter run --ssr).
+func Root() gutter.Widget {
     return widgets.Scaffold{
         Title:  "myapp",
         Theme:  themes.Apple,
@@ -117,16 +117,18 @@ func (App) Build(ctx *gutter.BuildContext) gutter.Widget {
     }
 }
 
-func main() { gutter.RunApp(App{}) }
+func main() { gutter.Serve(gutter.Config{Root: Root}) }
 ```
 
 The three things worth noticing:
 
-1. **`App` is a `StatelessWidget`.** It satisfies the interface by having a single `Build(ctx) Widget` method. The framework calls it once at mount time and again whenever an ancestor rebuilds.
-2. **`Scaffold` is the root.** It owns the app-wide theme, sets the document title, and lays out the app bar + body + optional footer. You'll almost always start here.
-3. **`gutter.RunApp(App{})` mounts the tree.** It finds `#app` in `index.html`, hands the BuildContext (with the active theme) down to your widget, and then blocks the goroutine forever so JS callbacks keep firing.
+1. **`Root` returns a `Scaffold`.** `Scaffold` is a `StatelessWidget` — it owns the app-wide theme, sets the document title, and lays out the app bar + body + optional footer. You'll almost always start here.
+2. **`gutter.Serve(gutter.Config{Root: Root})` is the one entry point.** It works for both modes: `gutter run` mounts the tree client-side; `gutter run --ssr` builds the wasm and runs this same program as a server that renders `Root()` to HTML, then the client hydrates it. No build tags, no second `main`.
+3. **It's all Go.** No router config, no JSX, no CSS files.
 
-That's the whole app. No router, no JSX, no CSS files.
+> Prefer the lowest-level entry? `gutter.RunApp(Root())` still works for a pure client-side app — `Serve` is just the batteries-included wrapper that also knows how to be an SSR server.
+
+That's the whole app.
 
 ---
 
@@ -173,12 +175,28 @@ func (s *counterState) Build(ctx *gutter.BuildContext) gutter.Widget {
     }
 }
 
-func main() { gutter.RunApp(CounterApp{}) }
+func Root() gutter.Widget { return CounterApp{} }
+
+func main() { gutter.Serve(gutter.Config{Root: Root}) }
 ```
 
 `StateObject` is the SetState mixin — embed it by value, return a **pointer** to your state struct from `CreateState`. The framework binds the element handle automatically, so `s.SetState(fn)` runs `fn` and then rebuilds **only the subtree this State owns**. Sibling widgets, focused inputs, and even other StatefulWidgets are untouched.
 
 See [State Management](state-management.html) for the full lifecycle (`InitState`, `Dispose`), keyed lists, and how the reconciler decides what to reuse.
+
+---
+
+## Server-side rendering — one flag
+
+Because your `main` uses `gutter.Serve`, you can render on the server with no code changes:
+
+```sh
+gutter run --ssr
+```
+
+The CLI builds the wasm, then runs your same program as a server that renders `Root()` to HTML per request. The browser **paints content immediately** (better first paint, crawlable for SEO), then `app.wasm` loads and **hydrates** the page into a live, interactive app. You can also call server functions from the client with type-safe RPC — sharing Go structs across the boundary, no codegen.
+
+This — SSR, hydration, typed RPC, islands — is covered end-to-end in **[Server-side rendering & full-stack](fullstack.html)**.
 
 ---
 
@@ -206,12 +224,13 @@ For a Docker image with nginx pre-configured, run:
 gutter build deploy
 ```
 
-This produces `./dist/`, generates a `Dockerfile`, `nginx.conf`, and `.dockerignore` (only if missing), and runs `docker build`. See [CLI](cli.html) for details.
+This produces `./dist/`, generates a `Dockerfile`, `nginx.conf`, and `.dockerignore` (only if missing), and runs `docker build`. `build deploy` defaults to **TinyGo** when it's installed (a much smaller production bundle); pass `--pure-go` to opt out. See [CLI](cli.html) for details.
 
 ---
 
 ## Next steps
 
+- **[Server-side rendering & full-stack](fullstack.html)** — SSR, hydration, typed client↔server RPC, islands.
 - **[Architecture](architecture.html)** — the widget model, the persistent element tree, how reconciliation works.
 - **[State Management](state-management.html)** — `StateObject`, lifecycle hooks, keyed lists.
 - **[Themes](themes.html)** — built-in presets, switching themes, the token tables.

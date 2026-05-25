@@ -131,6 +131,30 @@ func TestHeadingLevelsMapToTypography(t *testing.T) {
 	}
 }
 
+func TestHeadingRendersSemanticTag(t *testing.T) {
+	th := themes.Apple
+	cases := map[HeadingLevel]string{H1: "h1", H2: "h2", H3: "h3", H4: "h4", H5: "h5", H6: "h6"}
+	for level, tag := range cases {
+		h := hostOfCtx(t, Heading{Level: level, Text: "x"}, testCtx(th))
+		wantTag(t, h, tag)
+		if h.Style["margin"] != "0" {
+			t.Errorf("H%d should reset margin to 0, got %q", level, h.Style["margin"])
+		}
+	}
+}
+
+func TestLinkHref(t *testing.T) {
+	th := themes.Apple
+	real := hostOfCtx(t, Link{Text: "Docs", Href: "/docs"}, testCtx(th))
+	if real.Attrs["href"] != "/docs" {
+		t.Errorf("href = %q, want /docs", real.Attrs["href"])
+	}
+	js := hostOfCtx(t, Link{Text: "x", OnPressed: func() {}}, testCtx(th))
+	if js.Attrs["href"] != "javascript:void(0)" {
+		t.Errorf("JS-driven link href = %q", js.Attrs["href"])
+	}
+}
+
 func TestBodyVariants(t *testing.T) {
 	th := themes.Apple
 	strong := hostOfCtx(t, Body{Text: "x", Bold: true}, testCtx(th))

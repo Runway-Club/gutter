@@ -30,7 +30,35 @@ type Heading struct {
 func (h Heading) Build(ctx *gutter.BuildContext) gutter.Widget {
 	t := activeTheme(ctx)
 	spec := headingSpec(t, h.Level)
-	return Text{Data: h.Text, Style: styleFromSpec(spec, fallback(resolveColor(t, h.Color), t.Colors.Ink))}
+	// Render a real <h1>–<h6> so screen readers and SEO see heading structure.
+	// margin:0 drops the browser's default heading margins; the theme spec owns
+	// sizing/weight.
+	style := map[string]string{
+		"color":  fallback(resolveColor(t, h.Color), t.Colors.Ink),
+		"margin": "0",
+	}
+	applySpec(style, spec)
+	return Styled{Tag: headingTag(h.Level), Text: h.Text, Style: style}
+}
+
+// headingTag maps a HeadingLevel to its semantic HTML tag.
+func headingTag(level HeadingLevel) string {
+	switch level {
+	case H1:
+		return "h1"
+	case H2:
+		return "h2"
+	case H3:
+		return "h3"
+	case H4:
+		return "h4"
+	case H5:
+		return "h5"
+	case H6:
+		return "h6"
+	default:
+		return "h2"
+	}
 }
 
 func headingSpec(t *themes.Theme, level HeadingLevel) themes.TextSpec {
@@ -93,7 +121,11 @@ func (c Caption) Build(ctx *gutter.BuildContext) gutter.Widget {
 // OnPressed wires a click handler; if nil, the link is non-interactive
 // (still styled, e.g. inside a breadcrumb).
 type Link struct {
-	Text      string
+	Text string
+	// Href is a real URL for navigation. When set the anchor is a genuine,
+	// crawlable link (good for SEO and accessibility); when empty the link is
+	// JS-driven (OnPressed) and uses a no-op href.
+	Href      string
 	OnPressed func()
 	Color     string
 }
@@ -106,11 +138,15 @@ func (l Link) Build(ctx *gutter.BuildContext) gutter.Widget {
 		"cursor":          "pointer",
 	}
 	applySpec(style, t.Typography.Link)
+	href := l.Href
+	if href == "" {
+		href = "javascript:void(0)"
+	}
 	w := Styled{
 		Tag:   "a",
 		Text:  l.Text,
 		Style: style,
-		Attrs: map[string]string{"href": "javascript:void(0)"},
+		Attrs: map[string]string{"href": href},
 	}
 	if l.OnPressed != nil {
 		op := l.OnPressed

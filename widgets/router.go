@@ -1,6 +1,7 @@
 package widgets
 
 import (
+	"net/url"
 	"strings"
 
 	"github.com/Runway-Club/gutter"
@@ -79,7 +80,24 @@ func (r *Router) Replace(path string) {
 func (r *Router) Pop() { r.popHistory() }
 
 // match returns the widget for path, or notFound if no pattern matches.
+// Query parses the query string of the current path into url.Values. For
+// "/search?q=go&page=2" it returns {"q": ["go"], "page": ["2"]}. Empty when the
+// path has no query string.
+func (r *Router) Query() url.Values {
+	_, q := splitPathQuery(r.current.Value())
+	v, _ := url.ParseQuery(q)
+	return v
+}
+
+// splitPathQuery separates "/path?a=1" into ("/path", "a=1").
+func splitPathQuery(p string) (path, query string) {
+	path, query, _ = strings.Cut(p, "?")
+	return path, query
+}
+
 func (r *Router) match(path string) gutter.Widget {
+	// Match on the path only; the query string is read via Router.Query.
+	path, _ = splitPathQuery(path)
 	if b, ok := r.routes[path]; ok {
 		return b(nil)
 	}

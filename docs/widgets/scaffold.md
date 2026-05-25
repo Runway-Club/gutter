@@ -44,9 +44,7 @@ Background and ink colors are pulled from the active theme's `Colors.Canvas` and
 ## Basic usage
 
 ```go
-type App struct{}
-
-func (App) Build(ctx *gutter.BuildContext) gutter.Widget {
+func Root() gutter.Widget {
     return widgets.Scaffold{
         Title:  "Hello",
         Theme:  themes.Apple,
@@ -57,7 +55,7 @@ func (App) Build(ctx *gutter.BuildContext) gutter.Widget {
     }
 }
 
-func main() { gutter.RunApp(App{}) }
+func main() { gutter.Serve(gutter.Config{Root: Root}) }
 ```
 
 ---
@@ -127,11 +125,11 @@ If your page wraps the Scaffold in an extra scrollable container with `overflow:
 
 ## Theme precedence
 
-`Scaffold.Theme` wins over `gutter.WithTheme` because it runs **during the Build**, after `RunApp` has already populated `ctx.Theme`:
+`Scaffold.Theme` wins over `Config.Theme` (and `gutter.WithTheme`) because it runs **during the Build**, after the runtime has already populated `ctx.Theme`:
 
 ```go
-gutter.RunApp(App{}, gutter.WithTheme(themes.Meta))
-// where App.Build returns Scaffold{Theme: themes.Apple, …}
+gutter.Serve(gutter.Config{Root: Root, Theme: themes.Meta})
+// where Root returns Scaffold{Theme: themes.Apple, …}
 // → renders with Apple, not Meta.
 ```
 

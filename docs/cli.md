@@ -24,7 +24,7 @@ This drops a `gutter` binary into `$GOBIN` (or `$GOPATH/bin`). Check it's on you
 
 ```sh
 gutter --version
-# gutter version 0.3.0
+# gutter version 0.5.0
 ```
 
 From a local checkout:
@@ -108,6 +108,23 @@ You can opt into watcher debug logs:
 GUTTER_WATCH_DEBUG=1 gutter run dev
 ```
 
+### `gutter run --ssr` — server-side rendering
+
+```text
+gutter run --ssr [--addr :8080] [--tinygo]
+```
+
+For apps whose `main` calls [`gutter.Serve`](fullstack.html) (the default scaffold does). Instead of serving static files, this:
+
+1. builds the wasm client into `./dist/` (as `gutter run` does), then
+2. runs your **same program compiled for the host** (`go run .`) — its `gutter.Serve` becomes an SSR server that renders `Root()` to HTML per request, mounts your RPC handlers at `/rpc`, and serves the wasm assets from `./dist/` for hydration.
+
+```sh
+gutter run --ssr
+```
+
+One program, two compilations — no separate `server/` package, no second `main`. `--addr` and `--dist` are passed to the server via the `GUTTER_ADDR` / `GUTTER_DIST` env vars, which `gutter.Serve` honors. See [Server-side rendering & full-stack](fullstack.html) for the full guide.
+
 ---
 
 ## `gutter build` — production bundle
@@ -187,6 +204,8 @@ gutter build deploy [--image registry.example.com/app:tag] [--no-build]
 
 Builds the project (you can skip this with `--no-build` if `./dist` already exists), writes `Dockerfile`, `nginx.conf`, and `.dockerignore` **only if they're missing**, then runs `docker build`. The generated nginx config already maps `application/wasm` and SPA-style `try_files`.
 
+Unlike `build`/`run`, **`build deploy` defaults to TinyGo** when it's on your `PATH` — production wants the smaller bundle. Pass `--pure-go` to force the standard toolchain, or `--tinygo` to require TinyGo (and fail if it's missing). A missing TinyGo with no flag falls back to standard Go with a hint.
+
 ```sh
 # Interactive — prompts for the image name:
 gutter build deploy
@@ -237,9 +256,10 @@ The CLI's main value is consistent behavior across Go versions, the right MIME t
 | Command                | What it does                                                       |
 | ---------------------- | ------------------------------------------------------------------ |
 | `gutter new <name>`    | Scaffold a project: `main.go`, `index.html`, `go.mod`, `.gitignore`. |
-| `gutter run`           | Bundle into `./dist/` and serve it on `:8080`.                     |
+| `gutter run`           | Bundle into `./dist/` and serve it on `:8080` (CSR).               |
 | `gutter run dev`       | Same as `run`, plus re-bundle + browser reload on `.go` / `.html` / `.css` changes. |
+| `gutter run --ssr`     | Build the wasm, then run your `gutter.Serve` program as an SSR server. |
 | `gutter build`         | Build a production-ready bundle into `./dist`.                     |
-| `gutter build deploy`  | Build, generate Dockerfile + nginx.conf, run `docker build`.       |
+| `gutter build deploy`  | Build (TinyGo by default), generate Dockerfile + nginx.conf, run `docker build`. |
 | `gutter --version`     | Print the CLI version.                                             |
 | `gutter --help`        | Print top-level help, or per-subcommand with `gutter <cmd> --help`. |

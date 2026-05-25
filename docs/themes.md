@@ -51,20 +51,20 @@ You never write CSS in app code.
 There are three places a theme can be chosen, in increasing precedence:
 
 1. **Framework default** — `themes.Apple`, applied if you do nothing.
-2. **`gutter.WithTheme(...)`** — passed to `RunApp`.
+2. **`Config.Theme` / `gutter.WithTheme(...)`** — set on `gutter.Serve` (or passed to `RunApp`).
 3. **`Scaffold{Theme: ...}`** — set on the app shell.
 
 The Scaffold wins because it mutates `ctx.Theme` during its own Build, and the same `*BuildContext` is threaded through every descendant.
 
 ```go
 // All three render an Apple-themed app:
-gutter.RunApp(App{})
-gutter.RunApp(App{}, gutter.WithTheme(themes.Apple))
-gutter.RunApp(App{}) // where App.Build returns Scaffold{Theme: themes.Apple, …}
+gutter.Serve(gutter.Config{Root: Root})
+gutter.Serve(gutter.Config{Root: Root, Theme: themes.Apple})
+gutter.Serve(gutter.Config{Root: Root}) // where Root returns Scaffold{Theme: themes.Apple, …}
 
-// Mix-and-match: WithTheme picks Meta, but Scaffold overrides to Apple.
-gutter.RunApp(App{}, gutter.WithTheme(themes.Meta))
-// where App.Build returns Scaffold{Theme: themes.Apple, …}
+// Mix-and-match: Config.Theme picks Meta, but Scaffold overrides to Apple.
+gutter.Serve(gutter.Config{Root: Root, Theme: themes.Meta})
+// where Root returns Scaffold{Theme: themes.Apple, …}
 // → Apple wins.
 ```
 
@@ -85,7 +85,7 @@ Extracted from [`theme_specs/APPLE_DESIGN.md`](https://github.com/Runway-Club/gu
 - Parchment (`#f5f5f7`) + dark (`#272729`) alternating tile pattern.
 - Apple-tight negative letter-spacing at display sizes.
 
-The framework default. `gutter.RunApp(MyApp{})` with no options uses it.
+The framework default. `gutter.Serve(gutter.Config{Root: Root})` with no theme set uses it.
 
 ### `themes.Meta`
 
@@ -116,7 +116,7 @@ func main() {
     if themeName == "meta" {
         theme = themes.Meta
     }
-    gutter.RunApp(MyApp{}, gutter.WithTheme(theme))
+    gutter.Serve(gutter.Config{Root: Root, Theme: theme})
 }
 ```
 
@@ -328,7 +328,7 @@ var MyTheme = &themes.Theme{
 }
 
 // Then:
-gutter.RunApp(MyApp{}, gutter.WithTheme(MyTheme))
+gutter.Serve(gutter.Config{Root: Root, Theme: MyTheme})
 ```
 
 **The contract is "fill every field a themed widget reads from."** If you leave `Components.ButtonGhost` empty and then use `Button{Variant: ButtonGhost}`, you'll get an unstyled button — empty CSS values mean "don't write that property."

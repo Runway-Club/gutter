@@ -22,9 +22,9 @@ import (
 	"github.com/Runway-Club/gutter/widgets"
 )
 
-type App struct{}
-
-func (App) Build(ctx *gutter.BuildContext) gutter.Widget {
+// Root builds the app's UI. gutter.Serve calls it on the client to mount or
+// hydrate, and on the server to render HTML when you run "gutter run --ssr".
+func Root() gutter.Widget {
 	return widgets.Scaffold{
 		Title: "__NAME__",
 		Theme: themes.Apple,
@@ -55,7 +55,9 @@ func (App) Build(ctx *gutter.BuildContext) gutter.Widget {
 }
 
 func main() {
-	gutter.RunApp(App{})
+	// One entry for both modes: "gutter run" serves this client-side; "gutter
+	// run --ssr" builds the wasm and runs this same program as an SSR server.
+	gutter.Serve(gutter.Config{Root: Root})
 }
 `
 

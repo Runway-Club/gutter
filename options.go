@@ -10,6 +10,7 @@ type Option func(*runConfig)
 type runConfig struct {
 	selector string
 	theme    *themes.Theme
+	hydrate  bool
 }
 
 func newRunConfig(opts []Option) *runConfig {
@@ -40,5 +41,19 @@ func WithSelector(s string) Option {
 		if s != "" {
 			c.selector = s
 		}
+	}
+}
+
+// WithHydrate tells RunApp to adopt server-rendered DOM (from RenderToHTML)
+// inside the container instead of building it from scratch: it walks the
+// existing nodes, wires up event listeners and lifecycle hooks, and only
+// touches the DOM where the client build disagrees with the server markup.
+// This preserves the instant first paint of SSR while making the page
+// interactive. If the container is empty (no SSR content), RunApp falls back to
+// a normal client-side mount, so the same main() works for both SSR and CSR
+// pages.
+func WithHydrate() Option {
+	return func(c *runConfig) {
+		c.hydrate = true
 	}
 }
