@@ -42,6 +42,13 @@ jobs:
           go-version-file: go.mod
           cache: true
       - uses: browser-actions/setup-chrome@v1
+      - name: allow Chrome's user-namespace sandbox
+        # ubuntu-24.04 runners restrict unprivileged user namespaces via
+        # AppArmor, which crashes Chrome's zygote sandbox (wasmbrowsertest runs
+        # Chrome with the sandbox on and exposes no flag to disable it). Lifting
+        # the restriction lets the sandbox initialize. `|| true` keeps it a
+        # no-op on images where the key doesn't exist.
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: install wasmbrowsertest
         run: |
           go install github.com/agnivade/wasmbrowsertest@latest
