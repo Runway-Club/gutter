@@ -100,8 +100,8 @@ func drawerRender(ctx *gutter.BuildContext, d Drawer, isOpen bool) gutter.Widget
 	}
 	panel := Styled{Attrs: dialogAttrs(isOpen), Style: panelStyle, Children: panelChildren}
 
-	return Styled{
+	return gutter.Portal{Child: Styled{
 		Style:    map[string]string{"display": "contents"},
 		Children: []gutter.Widget{backdrop, panel},
-	}
+	}}
 }

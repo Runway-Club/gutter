@@ -3,6 +3,7 @@ package widgets
 import (
 	"testing"
 
+	"github.com/Runway-Club/gutter"
 	"github.com/Runway-Club/gutter/themes"
 )
 
@@ -47,15 +48,27 @@ func TestDialogAttrs(t *testing.T) {
 	}
 }
 
-// The dialog attrs must actually reach the overlay sheet.
+// The dialog attrs must actually reach the overlay sheet, which now lives
+// inside a Portal.
 func TestPopupSheetHasDialogRole(t *testing.T) {
 	ctx := testCtx(themes.Apple)
-	openSheet := popupRender(ctx, Popup{Child: Text{Data: "x"}}, true).(Styled).Children[1].(Styled)
+	openSheet := portalSheet(t, popupRender(ctx, Popup{Child: Text{Data: "x"}}, true))
 	if openSheet.Attrs["role"] != "dialog" {
 		t.Fatalf("popup sheet role = %q, want dialog", openSheet.Attrs["role"])
 	}
-	closedSheet := popupRender(ctx, Popup{Child: Text{Data: "x"}}, false).(Styled).Children[1].(Styled)
+	closedSheet := portalSheet(t, popupRender(ctx, Popup{Child: Text{Data: "x"}}, false))
 	if closedSheet.Attrs["aria-hidden"] != "true" {
 		t.Errorf("closed popup sheet should be aria-hidden")
 	}
+}
+
+// portalSheet unwraps Portal → display:contents Styled → [backdrop, sheet] and
+// returns the sheet (index 1).
+func portalSheet(t *testing.T, w gutter.Widget) Styled {
+	t.Helper()
+	contents, ok := w.(gutter.Portal)
+	if !ok {
+		t.Fatalf("overlay root = %T, want gutter.Portal", w)
+	}
+	return contents.Child.(Styled).Children[1].(Styled)
 }

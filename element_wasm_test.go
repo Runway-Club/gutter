@@ -159,6 +159,62 @@ func TestReconcileRemountsOnTagChange(t *testing.T) {
 	}
 }
 
+// portalRootHas reports whether any child of #gutter-portal-root has the given
+// textContent (the portal root is shared across tests).
+func portalRootHas(text string) bool {
+	root := js.Global().Get("document").Call("getElementById", "gutter-portal-root")
+	if root.IsNull() {
+		return false
+	}
+	kids := root.Get("childNodes")
+	for i := range kids.Get("length").Int() {
+		if kids.Index(i).Get("textContent").String() == text {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPortalTeleportsChild(t *testing.T) {
+	parent := freshParent()
+	el := newElement(Portal{Child: testHost{tag: "p", text: "ported"}})
+	el.mount(parent, js.Null(), testCtxVal)
+
+	// The tree position holds only the zero-size <template> anchor.
+	if n := parent.Get("childNodes").Get("length").Int(); n != 1 {
+		t.Fatalf("parent child count = %d, want 1 (the anchor)", n)
+	}
+	anchor := parent.Get("firstChild")
+	if got := anchor.Get("tagName").String(); got != "TEMPLATE" {
+		t.Fatalf("anchor tag = %q, want TEMPLATE", got)
+	}
+	if !el.dom().Equal(anchor) {
+		t.Error("portal dom() should be the anchor node")
+	}
+	// The child is teleported into the body-level portal root, not the parent.
+	if parent.Get("textContent").String() == "ported" {
+		t.Error("child should not be in the parent subtree")
+	}
+	if !portalRootHas("ported") {
+		t.Error("child not found in #gutter-portal-root")
+	}
+
+	// Update reconciles the child in place (in the portal root).
+	el.update(Portal{Child: testHost{tag: "p", text: "updated"}}, testCtxVal)
+	if !portalRootHas("updated") {
+		t.Error("updated child not found in portal root")
+	}
+
+	// Unmount removes the anchor and the teleported child.
+	el.unmount()
+	if n := parent.Get("childNodes").Get("length").Int(); n != 0 {
+		t.Errorf("anchor not removed on unmount: %d children remain", n)
+	}
+	if portalRootHas("updated") {
+		t.Error("teleported child not removed from portal root on unmount")
+	}
+}
+
 // ---- keyed reconciliation ----
 
 func childTexts(parent js.Value) []string {

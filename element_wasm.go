@@ -49,6 +49,11 @@ type Element interface {
 // mounting it. The element has no DOM until mount is called.
 func newElement(w Widget) Element {
 	wt := reflect.TypeOf(w)
+	// Portal is intercepted before the HostWidget branch: instead of rendering
+	// its placeholder, the runtime teleports its Child into the portal root.
+	if p, ok := w.(Portal); ok {
+		return &portalElement{w: p, wt: wt}
+	}
 	switch x := w.(type) {
 	case HostWidget:
 		return &hostElement{w: x, wt: wt}
@@ -58,6 +63,19 @@ func newElement(w Widget) Element {
 		return &statelessElement{w: x, wt: wt}
 	}
 	panic("gutter: value does not implement HostWidget, StatelessWidget, or StatefulWidget")
+}
+
+// portalRoot returns the shared body-level container all Portals mount into,
+// creating it on first use.
+func portalRoot() js.Value {
+	doc := js.Global().Get("document")
+	root := doc.Call("getElementById", "gutter-portal-root")
+	if root.IsNull() {
+		root = doc.Call("createElement", "div")
+		root.Call("setAttribute", "id", "gutter-portal-root")
+		doc.Get("body").Call("appendChild", root)
+	}
+	return root
 }
 
 func widgetKey(w Widget) any {
@@ -541,6 +559,68 @@ func (e *statelessElement) unmount() {
 	if e.child != nil {
 		e.child.unmount()
 		e.child = nil
+	}
+}
+
+// =========== portalElement ===========
+
+// portalElement leaves a zero-size <template> anchor at its tree position (so
+// the parent's reconciliation positioning is unaffected) and mounts its Child
+// into the shared body-level portal root instead.
+type portalElement struct {
+	w      Portal
+	wt     reflect.Type
+	anchor js.Value
+	root   js.Value
+	child  Element
+}
+
+func (e *portalElement) widget() Widget           { return e.w }
+func (e *portalElement) widgetType() reflect.Type { return e.wt }
+func (e *portalElement) key() any                 { return widgetKey(e.w) }
+func (e *portalElement) dom() js.Value            { return e.anchor }
+
+func (e *portalElement) mount(parent, before js.Value, ctx *BuildContext) {
+	doc := js.Global().Get("document")
+	e.anchor = doc.Call("createElement", "template")
+	e.anchor.Call("setAttribute", "data-gutter-portal", "1")
+	parent.Call("insertBefore", e.anchor, before)
+	e.root = portalRoot()
+	e.child = newElement(e.w.Child)
+	e.child.mount(e.root, js.Null(), ctx)
+}
+
+func (e *portalElement) hydrate(node js.Value, ctx *BuildContext) {
+	// node is the SSR placeholder <template data-gutter-portal>. Adopt it as the
+	// anchor; Child wasn't server-rendered into the root, so mount it fresh.
+	if sameTag(node, "template") {
+		e.anchor = node
+	} else {
+		// Defensive: structure drifted — make our own anchor in place.
+		doc := js.Global().Get("document")
+		e.anchor = doc.Call("createElement", "template")
+		node.Get("parentNode").Call("insertBefore", e.anchor, node)
+		node.Get("parentNode").Call("removeChild", node)
+	}
+	e.root = portalRoot()
+	e.child = newElement(e.w.Child)
+	e.child.mount(e.root, js.Null(), ctx)
+}
+
+func (e *portalElement) update(newW Widget, ctx *BuildContext) {
+	e.w = newW.(Portal)
+	e.child = reconcile(e.root, e.child, e.w.Child, ctx)
+}
+
+func (e *portalElement) unmount() {
+	if e.child != nil {
+		e.child.unmount()
+		e.child = nil
+	}
+	if !e.anchor.IsUndefined() && !e.anchor.IsNull() {
+		if p := e.anchor.Get("parentNode"); !p.IsNull() && !p.IsUndefined() {
+			p.Call("removeChild", e.anchor)
+		}
 	}
 }
 
