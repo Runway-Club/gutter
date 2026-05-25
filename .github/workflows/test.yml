@@ -1,0 +1,79 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  # Layer 1: platform-neutral logic — widgets' rendered output, theme tokens,
+  # Notifier, assets, options, SetState batching. Plus formatting, vet on both
+  # targets, and a WASM build smoke check.
+  host:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (echo "gofmt needed:"; gofmt -l .; exit 1)
+      - name: vet (host)
+        run: go vet ./...
+      - name: vet (wasm)
+        run: GOOS=js GOARCH=wasm go vet ./...
+      - name: test (host, race)
+        run: go test -race -cover ./...
+      - name: build (wasm)
+        run: GOOS=js GOARCH=wasm go build ./...
+
+  # Layer 2: the reconciler (element_wasm.go) running as real WASM against a
+  # real DOM, via wasmbrowsertest in headless Chrome.
+  wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: browser-actions/setup-chrome@v1
+      - name: install wasmbrowsertest
+        run: |
+          go install github.com/agnivade/wasmbrowsertest@latest
+          cp "$(go env GOPATH)/bin/wasmbrowsertest" "$(go env GOPATH)/bin/go_js_wasm_exec"
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: test (wasm runtime)
+        run: GOOS=js GOARCH=wasm go test -count=1 ./...
+
+  # Layer 3: full end-to-end — the testapp built and served by the gutter CLI,
+  # driven through a real browser by Playwright.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: install playwright
+        working-directory: e2e
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+      - name: e2e
+        working-directory: e2e
+        run: npx playwright test
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: e2e/playwright-report
+          retention-days: 7
