@@ -254,14 +254,22 @@ func (e *hostElement) mount(parent, before js.Value, ctx *BuildContext) {
 func (e *hostElement) hydrate(node js.Value, ctx *BuildContext) {
 	e.host = e.w.Host()
 	e.parent = node.Get("parentNode")
-	// Tag mismatch → the client built a different element than the server.
-	// Can't adopt: mount a fresh node in place and drop the stale SSR one.
-	if !sameTag(node, e.host.Tag) {
-		e.mount(e.parent, node, ctx)
+	if sameTag(node, e.host.Tag) {
+		e.node = node
+	} else {
+		// Tag mismatch: the client built a different element than the server.
+		// Recover fine-grainedly — recreate ONLY this element with the right tag
+		// and MOVE the server-rendered children into it, so their (potentially
+		// large) DOM subtrees survive and still get hydrated, instead of
+		// discarding the whole subtree. Warn so the divergence is visible.
+		warnHydrationMismatch(node, e.host.Tag)
+		e.node = js.Global().Get("document").Call("createElement", e.host.Tag)
+		for c := node.Get("firstChild"); !c.IsNull(); c = node.Get("firstChild") {
+			e.node.Call("appendChild", c)
+		}
+		e.parent.Call("insertBefore", e.node, node)
 		e.parent.Call("removeChild", node)
-		return
 	}
-	e.node = node
 	// Re-apply attrs/style/text idempotently so the client is authoritative
 	// even if the server markup drifted; then strip the SSR-only markers.
 	applyAttrs(e.node, nil, e.host.Attrs)
@@ -305,6 +313,22 @@ func sameTag(node js.Value, tag string) bool {
 		return false
 	}
 	return strings.EqualFold(tn.String(), tag)
+}
+
+// warnHydrationMismatch logs a console warning when the client builds a
+// different element tag than the server rendered — the usual cause of a
+// hydration recovery. Surfacing it helps developers find SSR/CSR divergence
+// (e.g. an AsyncBuilder whose pending and resolved states use different tags).
+func warnHydrationMismatch(node js.Value, want string) {
+	if want == "" {
+		want = "div"
+	}
+	got := "?"
+	if tn := node.Get("tagName"); !tn.IsUndefined() && !tn.IsNull() {
+		got = strings.ToLower(tn.String())
+	}
+	js.Global().Get("console").Call("warn",
+		"gutter: hydration mismatch — server rendered <"+got+">, client expected <"+strings.ToLower(want)+">; recreating the node and salvaging its children")
 }
 
 func (e *hostElement) update(newW Widget, ctx *BuildContext) {
