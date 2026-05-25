@@ -135,4 +135,3 @@ func (s *fileState) Dispose() {
 		s.cleanup = nil
 	}
 }
-

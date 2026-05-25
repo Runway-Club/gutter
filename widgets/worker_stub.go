@@ -17,5 +17,5 @@ func newWorkerHandle(w Worker, onMsg, onErr func(string)) *workerHandle {
 	return &workerHandle{}
 }
 
-func (h *workerHandle) post(msg string)  {}
-func (h *workerHandle) terminate()        {}
+func (h *workerHandle) post(msg string) {}
+func (h *workerHandle) terminate()      {}

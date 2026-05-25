@@ -152,6 +152,7 @@ func (s *showcaseState) Build(ctx *gutter.BuildContext) gutter.Widget {
 				surfaceVariantsSection(),
 				badgesSection(),
 				imagesSection(),
+				layoutSection(),
 				inputsSection(s),
 				formControlsSection(s),
 				textAreaSection(s),
@@ -416,6 +417,132 @@ func imagesSection() gutter.Widget {
 					widgets.Caption{Text: "Asset path"},
 				},
 			},
+		},
+	})
+}
+
+// layoutSection tours the flex/grid layout primitives and the theme Color
+// tokens. Every coloured box here is a Container tinted with a token
+// (ColorSurfaceSoft, ColorSurfaceDark, …) rather than a hard-coded hex — swap
+// the build-time theme and the whole section recolours itself.
+func layoutSection() gutter.Widget {
+	tile := func(label string) gutter.Widget {
+		return widgets.Container{
+			Color:        widgets.ColorSurfaceSoft,
+			BorderColor:  widgets.ColorHairline,
+			BorderRadius: "10px",
+			Padding:      widgets.EdgeInsetsAll(14),
+			Child:        widgets.Body{Text: label, Small: true},
+		}
+	}
+	gridTiles := make([]gutter.Widget, 6)
+	for i := range gridTiles {
+		gridTiles[i] = tile(fmt.Sprintf("cell %d", i+1))
+	}
+	chipLabels := []string{"flutter", "wasm", "go", "declarative", "no-css", "reactive", "themed"}
+	chips := make([]gutter.Widget, len(chipLabels))
+	for i, c := range chipLabels {
+		chips[i] = widgets.Container{
+			Color:        widgets.ColorCanvasAlt,
+			BorderColor:  widgets.ColorHairline,
+			BorderRadius: "999px",
+			Padding:      widgets.EdgeInsetsSymmetric(6, 14),
+			Child:        widgets.Caption{Text: c},
+		}
+	}
+	tokens := []struct{ name, token string }{
+		{"Primary", widgets.ColorPrimary},
+		{"Accent", widgets.ColorAccent},
+		{"SurfaceSoft", widgets.ColorSurfaceSoft},
+		{"CanvasAlt", widgets.ColorCanvasAlt},
+		{"SurfaceDark", widgets.ColorSurfaceDark},
+		{"Success", widgets.ColorSuccess},
+		{"Warning", widgets.ColorWarning},
+		{"Critical", widgets.ColorCritical},
+	}
+	swatches := make([]gutter.Widget, len(tokens))
+	for i, tk := range tokens {
+		swatches[i] = widgets.Column{
+			Spacing:        4,
+			CrossAxisAlign: widgets.CrossAxisCenter,
+			Children: []gutter.Widget{
+				widgets.Container{Color: tk.token, BorderRadius: "8px", Width: "72px", Height: "44px", BorderColor: widgets.ColorHairline},
+				widgets.Caption{Text: tk.name},
+			},
+		}
+	}
+
+	return sectionFrame("Layout & color tokens", widgets.Column{
+		Spacing: 24,
+		Children: []gutter.Widget{
+			// Row + Expanded + Spacer: a fixed label, an Expanded that eats the
+			// free space, then an action pushed to the far right by a Spacer.
+			widgets.Caption{Text: "Row · Expanded · Spacer"},
+			widgets.Row{
+				Spacing:        8,
+				CrossAxisAlign: widgets.CrossAxisCenter,
+				Children: []gutter.Widget{
+					tile("fixed"),
+					widgets.Expanded{Child: tile("Expanded — fills the remaining width")},
+					widgets.Spacer{},
+					widgets.Button{Variant: widgets.ButtonGhost, Label: "Action"},
+				},
+			},
+
+			// Stack + Positioned: a card with a badge pinned to its corner.
+			widgets.Caption{Text: "Stack · Positioned (corner badge)"},
+			widgets.Stack{
+				Width:  "180px",
+				Height: "104px",
+				Children: []gutter.Widget{
+					widgets.Container{
+						Color:        widgets.ColorCanvasAlt,
+						BorderColor:  widgets.ColorHairline,
+						BorderRadius: "12px",
+						Width:        "180px",
+						Height:       "104px",
+						Child:        widgets.Center{Child: widgets.Body{Text: "base layer"}},
+					},
+					widgets.Positioned{Top: "-8px", Right: "-8px", Child: widgets.Badge{Text: "NEW"}},
+				},
+			},
+
+			// Responsive grid — no media query, just minmax(auto-fill).
+			widgets.Caption{Text: "Grid · MinColumnWidth 140px (resize the window — it reflows)"},
+			widgets.Grid{MinColumnWidth: "140px", Gap: 12, Children: gridTiles},
+
+			// Wrap: chips that flow onto new lines.
+			widgets.Caption{Text: "Wrap · chips"},
+			widgets.Wrap{Spacing: 8, RunSpacing: 8, Children: chips},
+
+			// AspectRatio inside a ConstrainedBox.
+			widgets.Caption{Text: "ConstrainedBox MaxWidth 320 · AspectRatio 16:9"},
+			widgets.ConstrainedBox{
+				MaxWidth: "320px",
+				Child: widgets.AspectRatio{
+					Ratio: 16.0 / 9.0,
+					Child: widgets.Container{
+						Color:        widgets.ColorSurfaceDark,
+						BorderRadius: "12px",
+						Child:        widgets.Center{Child: widgets.Body{Text: "16 : 9", Color: widgets.ColorOnDark}},
+					},
+				},
+			},
+
+			// Align: child anchored bottom-right of a fixed box.
+			widgets.Caption{Text: "Align · BottomRight"},
+			widgets.Container{
+				Color:        widgets.ColorSurfaceSoft,
+				BorderColor:  widgets.ColorHairline,
+				BorderRadius: "12px",
+				Width:        "100%",
+				Height:       "96px",
+				Child:        widgets.Align{Alignment: widgets.AlignBottomRight, Child: widgets.Padding{Padding: widgets.EdgeInsetsAll(10), Child: widgets.Badge{Text: "pinned"}}},
+			},
+
+			// The palette, every box tinted by a token.
+			widgets.Caption{Text: "Color tokens — resolved against the active theme"},
+			widgets.Wrap{Spacing: 16, RunSpacing: 12, Children: swatches},
 		},
 	})
 }

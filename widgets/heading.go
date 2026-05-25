@@ -30,7 +30,7 @@ type Heading struct {
 func (h Heading) Build(ctx *gutter.BuildContext) gutter.Widget {
 	t := activeTheme(ctx)
 	spec := headingSpec(t, h.Level)
-	return Text{Data: h.Text, Style: styleFromSpec(spec, fallback(h.Color, t.Colors.Ink))}
+	return Text{Data: h.Text, Style: styleFromSpec(spec, fallback(resolveColor(t, h.Color), t.Colors.Ink))}
 }
 
 func headingSpec(t *themes.Theme, level HeadingLevel) themes.TextSpec {
@@ -75,7 +75,7 @@ func (b Body) Build(ctx *gutter.BuildContext) gutter.Widget {
 	default:
 		spec = t.Typography.Body
 	}
-	return Text{Data: b.Text, Style: styleFromSpec(spec, fallback(b.Color, t.Colors.Ink))}
+	return Text{Data: b.Text, Style: styleFromSpec(spec, fallback(resolveColor(t, b.Color), t.Colors.Ink))}
 }
 
 // Caption is shorthand for Body{Small: true}.
@@ -101,7 +101,7 @@ type Link struct {
 func (l Link) Build(ctx *gutter.BuildContext) gutter.Widget {
 	t := activeTheme(ctx)
 	style := map[string]string{
-		"color":           fallback(l.Color, t.Colors.Primary),
+		"color":           fallback(resolveColor(t, l.Color), t.Colors.Primary),
 		"text-decoration": "none",
 		"cursor":          "pointer",
 	}

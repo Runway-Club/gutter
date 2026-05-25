@@ -31,12 +31,12 @@ const (
 // If both are set, Asset wins. Width/Height accept any CSS length ("48px",
 // "100%", etc.); the image's object-fit is controlled by Fit.
 type Image struct {
-	Asset  string
-	Src    string
-	Alt    string
-	Width  string
-	Height string
-	Fit    ImageFit
+	Asset   string
+	Src     string
+	Alt     string
+	Width   string
+	Height  string
+	Fit     ImageFit
 	Rounded string // optional border-radius (CSS), e.g. "50%" for an avatar
 }
 

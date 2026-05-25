@@ -19,8 +19,10 @@ var (
 	styleAccent = lipgloss.NewStyle().Foreground(lipgloss.Color("#8B5CF6")).Bold(true)
 )
 
-func printTitle(s string)              { fmt.Println(styleTitle.Render("▶ " + s)) }
-func printOK(format string, a ...any)  { fmt.Println(styleOK.Render("✓") + " " + fmt.Sprintf(format, a...)) }
+func printTitle(s string) { fmt.Println(styleTitle.Render("▶ " + s)) }
+func printOK(format string, a ...any) {
+	fmt.Println(styleOK.Render("✓") + " " + fmt.Sprintf(format, a...))
+}
 func printWarn(format string, a ...any) {
 	fmt.Println(styleWarn.Render("!") + " " + fmt.Sprintf(format, a...))
 }
