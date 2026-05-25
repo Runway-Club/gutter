@@ -183,11 +183,11 @@ func runNew(name, modulePath string) error {
 	}
 
 	files := map[string]string{
-		"main.go":           strings.ReplaceAll(mainGoTemplate, "__NAME__", name),
-		"index.html":        strings.ReplaceAll(indexHTMLTemplate, "__NAME__", name),
-		"go.mod":            strings.ReplaceAll(goModTemplate, "__MODULE__", modulePath),
-		".gitignore":        gitignoreTemplate,
-		"assets/.gitkeep":   "",
+		"main.go":         strings.ReplaceAll(mainGoTemplate, "__NAME__", name),
+		"index.html":      strings.ReplaceAll(indexHTMLTemplate, "__NAME__", name),
+		"go.mod":          strings.ReplaceAll(goModTemplate, "__MODULE__", modulePath),
+		".gitignore":      gitignoreTemplate,
+		"assets/.gitkeep": "",
 	}
 	for fname, content := range files {
 		path := filepath.Join(name, fname)

@@ -57,21 +57,21 @@ func bottomSheetRender(ctx *gutter.BuildContext, b BottomSheet, isOpen bool) gut
 
 	radius := fallback(t.Rounded.Large, "12px")
 	sheetStyle := map[string]string{
-		"position":            "fixed",
-		"left":                "0",
-		"right":               "0",
-		"bottom":              "0",
-		"max-height":          height,
-		"background":          fallback(t.Colors.Canvas, "#ffffff"),
-		"color":               fallback(t.Colors.Ink, "#000000"),
-		"padding":             fallback(t.Spacing.LG, "24px"),
+		"position":                "fixed",
+		"left":                    "0",
+		"right":                   "0",
+		"bottom":                  "0",
+		"max-height":              height,
+		"background":              fallback(t.Colors.Canvas, "#ffffff"),
+		"color":                   fallback(t.Colors.Ink, "#000000"),
+		"padding":                 fallback(t.Spacing.LG, "24px"),
 		"border-top-left-radius":  radius,
 		"border-top-right-radius": radius,
-		"z-index":             z,
-		"transition":          "transform 0.25s ease-out",
-		"box-shadow":          "0 -8px 32px rgba(0,0,0,0.18)",
-		"box-sizing":          "border-box",
-		"overflow-y":          "auto",
+		"z-index":                 z,
+		"transition":              "transform 0.25s ease-out",
+		"box-shadow":              "0 -8px 32px rgba(0,0,0,0.18)",
+		"box-sizing":              "border-box",
+		"overflow-y":              "auto",
 	}
 	if isOpen {
 		sheetStyle["transform"] = "translateY(0)"

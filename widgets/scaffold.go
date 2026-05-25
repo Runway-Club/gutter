@@ -10,11 +10,11 @@ import (
 //
 //   - Title         — pushed to document.title
 //   - Theme         — switches the active theme for this subtree (and, since
-//                     gutter has one BuildContext per app, effectively the
-//                     whole app)
+//     gutter has one BuildContext per app, effectively the
+//     whole app)
 //   - AppBar        — the top navigation strip (use widgets.AppBar)
 //   - StickyAppBar  — when true, pin the AppBar to the viewport top while
-//                     the rest of the page scrolls
+//     the rest of the page scrolls
 //   - Body          — your main content; takes the remaining vertical space
 //   - Footer        — an optional bottom strip (legal, build info, etc.)
 //
