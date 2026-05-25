@@ -29,9 +29,26 @@ import (
 	"github.com/Runway-Club/gutter/widgets"
 )
 
-// Root builds the app's UI. gutter.Serve calls it on the client to mount or
-// hydrate, and on the server to render HTML when you run "gutter run --ssr".
+// Root declares the document <head> as a widget (gutter.Head) wrapping the UI,
+// instead of a raw HTML string. Under "gutter run --ssr" its Title/Raw render
+// into the page <head> (real <title> + favicon + fonts for SEO and brand); on
+// the client Head sets document.title. Head is transparent — it renders Child.
 func Root() gutter.Widget {
+	return gutter.Head{
+		Title: "__NAME__",
+		Raw: []string{
+			"<link rel=\"icon\" type=\"image/x-icon\" href=\"/favicon.ico\">",
+			"<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">",
+			"<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>",
+			"<link href=\"https://fonts.googleapis.com/css2?family=Lexend:wght@100..900&display=swap\" rel=\"stylesheet\">",
+			"<link href=\"https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200\" rel=\"stylesheet\">",
+		},
+		Child: page(),
+	}
+}
+
+// page builds the app's UI, rendered inside the document body.
+func page() gutter.Widget {
 	return widgets.Scaffold{
 		Title: "__NAME__",
 		Theme: themes.Meta, // swap for themes.Apple or themes.Neutral
@@ -69,20 +86,10 @@ func Root() gutter.Widget {
 	}
 }
 
-// headHTML mirrors the favicon + font <link>s from index.html, injected into
-// the <head> of SSR pages ("gutter run --ssr") so they get the same icon and
-// fonts as the client-rendered page. The SSR document already supplies charset,
-// viewport, and a margin reset, so this only adds the brand bits.
-const headHTML = "<link rel=\"icon\" type=\"image/x-icon\" href=\"/favicon.ico\">" +
-	"<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">" +
-	"<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>" +
-	"<link href=\"https://fonts.googleapis.com/css2?family=Lexend:wght@100..900&display=swap\" rel=\"stylesheet\">" +
-	"<link href=\"https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200\" rel=\"stylesheet\">"
-
 func main() {
 	// One entry for both modes: "gutter run" serves this client-side; "gutter
 	// run --ssr" builds the wasm and runs this same program as an SSR server.
-	gutter.Serve(gutter.Config{Root: Root, Head: headHTML})
+	gutter.Serve(gutter.Config{Root: Root})
 }
 `
 
@@ -120,7 +127,16 @@ func Root() gutter.Widget {
 		Title:    "__NAME__ — built with Gutter",
 		Meta:     map[string]string{"description": "A server-rendered Gutter app with typed RPC."},
 		Property: map[string]string{"og:title": "__NAME__"},
-		Child:    pinger{},
+		// Raw appends verbatim <head> tags — the favicon + fonts the SSR page
+		// needs (the SSR doc template only supplies charset/viewport/reset).
+		Raw: []string{
+			"<link rel=\"icon\" type=\"image/x-icon\" href=\"/favicon.ico\">",
+			"<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">",
+			"<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>",
+			"<link href=\"https://fonts.googleapis.com/css2?family=Lexend:wght@100..900&display=swap\" rel=\"stylesheet\">",
+			"<link href=\"https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200\" rel=\"stylesheet\">",
+		},
+		Child: pinger{},
 	}
 }
 

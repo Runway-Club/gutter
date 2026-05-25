@@ -12,7 +12,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const version = "0.6.0"
+const version = "0.7.0"
 
 func main() {
 	root := &cobra.Command{
@@ -22,6 +22,11 @@ func main() {
 		Version:       version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// Bare `gutter` greets with the logo banner, then the usual help.
+		Run: func(cmd *cobra.Command, _ []string) {
+			printBanner()
+			_ = cmd.Help()
+		},
 	}
 	root.AddCommand(newCmd(), runCmd(), buildCmd())
 	if err := root.Execute(); err != nil {
