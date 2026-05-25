@@ -35,6 +35,38 @@ type ssrWrap struct{ child Widget }
 
 func (w ssrWrap) Build(*BuildContext) Widget { return w.child }
 
+func TestRenderDocumentCollectsHead(t *testing.T) {
+	root := Head{
+		Title:    "My Page",
+		Meta:     map[string]string{"description": "hello & welcome"},
+		Property: map[string]string{"og:title": "OG Title"},
+		Raw:      []string{`<link rel="canonical" href="/x">`},
+		Child:    ssrBox{tag: "main", text: "body"},
+	}
+	head, body, err := RenderDocument(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"<title>My Page</title>",
+		`<meta name="description" content="hello &amp; welcome">`, // escaped
+		`<meta property="og:title" content="OG Title">`,
+		`<link rel="canonical" href="/x">`,
+	} {
+		if !strings.Contains(head, want) {
+			t.Fatalf("head missing %q:\n%s", want, head)
+		}
+	}
+	// Head is transparent: the body is exactly its Child, no extra wrapper.
+	if body != "<main>body</main>" {
+		t.Fatalf("body = %q, want transparent child render", body)
+	}
+	// RenderToHTML still returns just the body.
+	if onlyBody, _ := RenderToHTML(root); onlyBody != body {
+		t.Fatalf("RenderToHTML body = %q, want %q", onlyBody, body)
+	}
+}
+
 type ssrCounter struct{ start int }
 
 func (c ssrCounter) CreateState() State { return &ssrCounterState{n: c.start} }

@@ -32,23 +32,37 @@ var ssrVoidElements = map[string]bool{
 // the same tokens they will at runtime. Returns an error if the tree contains a
 // value that implements none of HostWidget/StatelessWidget/StatefulWidget.
 func RenderToHTML(root Widget, opts ...Option) (string, error) {
-	cfg := newRunConfig(opts)
-	ctx := &BuildContext{Theme: cfg.theme}
-	var sb strings.Builder
-	if err := ssrRender(&sb, root, ctx); err != nil {
-		return "", err
-	}
-	return sb.String(), nil
+	_, body, err := RenderDocument(root, opts...)
+	return body, err
 }
 
-func ssrRender(sb *strings.Builder, w Widget, ctx *BuildContext) error {
+// RenderDocument renders the body HTML plus the <head> HTML contributed by any
+// gutter.Head widgets in the tree (title/meta/raw). ServeSSR uses this so
+// server-rendered pages get a real <title> and meta tags; call it directly if
+// you assemble your own document shell. The body is identical to RenderToHTML.
+func RenderDocument(root Widget, opts ...Option) (head, body string, err error) {
+	cfg := newRunConfig(opts)
+	ctx := &BuildContext{Theme: cfg.theme}
+	var bodyB, headB strings.Builder
+	if err := ssrRender(&bodyB, &headB, root, ctx); err != nil {
+		return "", "", err
+	}
+	return headB.String(), bodyB.String(), nil
+}
+
+func ssrRender(sb, head *strings.Builder, w Widget, ctx *BuildContext) error {
 	if w == nil {
 		return nil
+	}
+	// Widgets may contribute to the document <head> (gutter.Head) regardless of
+	// what they render in the body.
+	if hp, ok := w.(headProvider); ok {
+		head.WriteString(hp.headHTML())
 	}
 	// Mirror newElement's dispatch order: Host, Stateful, Stateless.
 	switch x := w.(type) {
 	case HostWidget:
-		return ssrRenderHost(sb, x.Host(), w, ctx)
+		return ssrRenderHost(sb, head, x.Host(), w, ctx)
 	case StatefulWidget:
 		st := x.CreateState()
 		if b, ok := st.(widgetBinder); ok {
@@ -59,13 +73,13 @@ func ssrRender(sb *strings.Builder, w Widget, ctx *BuildContext) error {
 		}
 		// No bindElement: s.elem stays nil, so any SetState during Build is a
 		// no-op (see StateObject.SetState) — correct for a one-shot render.
-		return ssrRender(sb, st.Build(ctx), ctx)
+		return ssrRender(sb, head, st.Build(ctx), ctx)
 	case StatelessWidget:
 		saved := ctx.inherited
 		if p, ok := x.(inheritedProvider); ok {
 			ctx.inherited = p.provideInto(ctx.inherited)
 		}
-		err := ssrRender(sb, x.Build(ctx), ctx)
+		err := ssrRender(sb, head, x.Build(ctx), ctx)
 		ctx.inherited = saved
 		return err
 	default:
@@ -73,7 +87,7 @@ func ssrRender(sb *strings.Builder, w Widget, ctx *BuildContext) error {
 	}
 }
 
-func ssrRenderHost(sb *strings.Builder, h *Host, w Widget, ctx *BuildContext) error {
+func ssrRenderHost(sb, head *strings.Builder, h *Host, w Widget, ctx *BuildContext) error {
 	if h == nil {
 		return nil
 	}
@@ -110,7 +124,7 @@ func ssrRenderHost(sb *strings.Builder, h *Host, w Widget, ctx *BuildContext) er
 		sb.WriteString(html.EscapeString(h.Text))
 	}
 	for _, child := range h.Children {
-		if err := ssrRender(sb, child, ctx); err != nil {
+		if err := ssrRender(sb, head, child, ctx); err != nil {
 			return err
 		}
 	}

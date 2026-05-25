@@ -98,7 +98,7 @@ func drawerRender(ctx *gutter.BuildContext, d Drawer, isOpen bool) gutter.Widget
 	if d.Child != nil {
 		panelChildren = []gutter.Widget{d.Child}
 	}
-	panel := Styled{Style: panelStyle, Children: panelChildren}
+	panel := Styled{Attrs: dialogAttrs(isOpen), Style: panelStyle, Children: panelChildren}
 
 	return Styled{
 		Style:    map[string]string{"display": "contents"},

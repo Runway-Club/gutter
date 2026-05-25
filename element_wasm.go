@@ -68,12 +68,33 @@ func widgetKey(w Widget) any {
 }
 
 // canUpdate reports whether an existing Element can be reused in place to
-// represent newW. We require both the Go type and the key to match.
+// represent newW. We require the Go type and key to match, and — for
+// HostWidgets — the rendered tag too.
 func canUpdate(old Element, newW Widget) bool {
 	if old.widgetType() != reflect.TypeOf(newW) {
 		return false
 	}
-	return old.key() == widgetKey(newW)
+	if old.key() != widgetKey(newW) {
+		return false
+	}
+	// Same Go type but a different rendered tag (a HostWidget that varies its
+	// Host().Tag by its fields) can't be updated in place: attribute-diffing a
+	// <div> into a <span> leaves the wrong element in the DOM. Force a remount.
+	if he, ok := old.(*hostElement); ok {
+		if hw, ok := newW.(HostWidget); ok && normTag(he.host) != normTag(hw.Host()) {
+			return false
+		}
+	}
+	return true
+}
+
+// normTag is the effective tag of a Host, normalizing the empty default to the
+// "div" that mount's createElement uses.
+func normTag(h *Host) string {
+	if h == nil || h.Tag == "" {
+		return "div"
+	}
+	return h.Tag
 }
 
 // reconcile is the single-child counterpart of reconcileChildren. It either

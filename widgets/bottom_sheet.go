@@ -83,7 +83,7 @@ func bottomSheetRender(ctx *gutter.BuildContext, b BottomSheet, isOpen bool) gut
 	if b.Child != nil {
 		sheetChildren = []gutter.Widget{b.Child}
 	}
-	sheet := Styled{Style: sheetStyle, Children: sheetChildren}
+	sheet := Styled{Attrs: dialogAttrs(isOpen), Style: sheetStyle, Children: sheetChildren}
 
 	return Styled{
 		Style:    map[string]string{"display": "contents"},

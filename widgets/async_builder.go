@@ -2,6 +2,7 @@ package widgets
 
 import (
 	"context"
+	"reflect"
 
 	"github.com/Runway-Club/gutter"
 )
@@ -45,14 +46,19 @@ type AsyncSnapshot[T any] struct {
 //	    },
 //	}
 //
-// Load is invoked exactly once per mount. Go function values cannot be
-// compared, so the framework cannot tell when Load itself has changed across
-// a parent rebuild. To force a fresh invocation (e.g. when the resource ID
-// changes), wrap the AsyncBuilder in widgets.WithKey with a key derived from
-// the inputs — that causes the old subtree to unmount and a new one to mount.
+// Load is invoked on mount and again whenever Deps changes across a parent
+// rebuild. Go function values cannot be compared, so the framework cannot tell
+// when Load itself has changed — list the inputs Load depends on (e.g. a
+// resource ID) in Deps, and AsyncBuilder cancels the in-flight call, resets to
+// AsyncPending, and re-runs Load when any of them change (compared with
+// reflect.DeepEqual). Leave Deps nil to load exactly once per mount. Wrapping
+// in widgets.WithKey still works as a heavier alternative (it remounts the
+// whole subtree, discarding child state).
 type AsyncBuilder[T any] struct {
 	Load    func(ctx context.Context) (T, error)
 	Builder func(ctx *gutter.BuildContext, snapshot AsyncSnapshot[T]) gutter.Widget
+	// Deps are re-run triggers: when they change (DeepEqual), Load runs again.
+	Deps []any
 }
 
 func (a AsyncBuilder[T]) CreateState() gutter.State {
@@ -63,6 +69,7 @@ type asyncState[T any] struct {
 	gutter.StateObject
 	snapshot AsyncSnapshot[T]
 	cancel   context.CancelFunc
+	deps     []any
 }
 
 func (s *asyncState[T]) widget() AsyncBuilder[T] {
@@ -70,6 +77,19 @@ func (s *asyncState[T]) widget() AsyncBuilder[T] {
 }
 
 func (s *asyncState[T]) InitState() {
+	s.deps = s.widget().Deps
+	s.start()
+}
+
+// start cancels any in-flight Load, resets to Pending, and launches Load again.
+// Called on mount (InitState) and when Deps change (DidUpdateWidget). It sets
+// snapshot synchronously so the rebuild that follows shows Pending immediately;
+// the goroutine SetStates the result when Load returns.
+func (s *asyncState[T]) start() {
+	if s.cancel != nil {
+		s.cancel()
+		s.cancel = nil
+	}
 	load := s.widget().Load
 	if load == nil {
 		s.snapshot = AsyncSnapshot[T]{State: AsyncDone}
@@ -81,9 +101,10 @@ func (s *asyncState[T]) InitState() {
 	go func() {
 		data, err := load(ctx)
 		if ctx.Err() != nil {
-			return
+			return // canceled (unmounted or superseded by a newer Deps) — drop result
 		}
 		s.SetState(func() {
+			s.cancel = nil
 			if err != nil {
 				s.snapshot = AsyncSnapshot[T]{State: AsyncFailed, Error: err}
 			} else {
@@ -93,11 +114,37 @@ func (s *asyncState[T]) InitState() {
 	}()
 }
 
+// DidUpdateWidget re-runs Load when Deps changes. Per the WidgetUpdater
+// contract a rebuild follows unconditionally, so start()'s synchronous reset to
+// Pending is enough — no SetState needed here.
+func (s *asyncState[T]) DidUpdateWidget(gutter.Widget) {
+	next := s.widget().Deps
+	if depsEqual(s.deps, next) {
+		return
+	}
+	s.deps = next
+	s.start()
+}
+
 func (s *asyncState[T]) Dispose() {
 	if s.cancel != nil {
 		s.cancel()
 		s.cancel = nil
 	}
+}
+
+// depsEqual compares two dependency lists element-wise with reflect.DeepEqual,
+// which tolerates non-comparable elements (slices, maps) without panicking.
+func depsEqual(a, b []any) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !reflect.DeepEqual(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *asyncState[T]) Build(ctx *gutter.BuildContext) gutter.Widget {

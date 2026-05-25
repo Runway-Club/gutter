@@ -35,24 +35,23 @@ func applySpec(style map[string]string, spec themes.TextSpec) {
 	}
 }
 
-// styleFromSpec produces a TextStyle from a TextSpec plus an explicit color.
-// Used by the typography widgets (Heading, Body, Caption).
-func styleFromSpec(spec themes.TextSpec, color string) *TextStyle {
-	return &TextStyle{
-		Color:         color,
-		FontFamily:    spec.FontFamily,
-		FontSize:      spec.FontSize,
-		FontWeight:    spec.FontWeight,
-		LineHeight:    spec.LineHeight,
-		LetterSpacing: spec.LetterSpacing,
-	}
-}
-
 func fallback(value, def string) string {
 	if value != "" {
 		return value
 	}
 	return def
+}
+
+// dialogAttrs returns the ARIA attributes for a modal overlay sheet (Popup,
+// Drawer, BottomSheet). role=dialog + aria-modal lets screen readers treat it
+// as a modal; aria-hidden hides the always-mounted-but-closed sheet from the
+// accessibility tree so it isn't reachable while invisible.
+func dialogAttrs(open bool) map[string]string {
+	a := map[string]string{"role": "dialog", "aria-modal": "true"}
+	if !open {
+		a["aria-hidden"] = "true"
+	}
+	return a
 }
 
 // propSyncHost is a HostWidget that exposes OnMount and OnUnmount alongside

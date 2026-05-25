@@ -125,6 +125,40 @@ func TestReconcileReplacesDifferentType(t *testing.T) {
 	}
 }
 
+// TestReconcileRemountsOnTagChange covers the tag-stability rule: a HostWidget
+// of the SAME Go type but a different rendered tag must remount (you can't morph
+// a <div> into a <span> by attribute diffing), while an unchanged tag updates in
+// place and keeps its DOM node.
+func TestReconcileRemountsOnTagChange(t *testing.T) {
+	parent := freshParent()
+	el := reconcile(parent, nil, testHost{tag: "div", text: "x"}, testCtxVal)
+	divNode := el.dom()
+	if got := divNode.Get("tagName").String(); got != "DIV" {
+		t.Fatalf("initial tag = %q, want DIV", got)
+	}
+
+	// Same type, same tag → update in place, same node.
+	elSame := reconcile(parent, el, testHost{tag: "div", text: "y"}, testCtxVal)
+	if !elSame.dom().Equal(divNode) {
+		t.Error("same tag should update in place, not remount")
+	}
+	if divNode.Get("textContent").String() != "y" {
+		t.Errorf("in-place update text = %q, want y", divNode.Get("textContent").String())
+	}
+
+	// Same type, different tag → remount into a <span>.
+	elDiff := reconcile(parent, elSame, testHost{tag: "span", text: "z"}, testCtxVal)
+	if elDiff.dom().Equal(divNode) {
+		t.Error("changed tag should remount, not reuse the <div> node")
+	}
+	if got := elDiff.dom().Get("tagName").String(); got != "SPAN" {
+		t.Fatalf("remounted tag = %q, want SPAN", got)
+	}
+	if parent.Get("childNodes").Get("length").Int() != 1 {
+		t.Errorf("expected exactly 1 child after remount, got %d", parent.Get("childNodes").Get("length").Int())
+	}
+}
+
 // ---- keyed reconciliation ----
 
 func childTexts(parent js.Value) []string {

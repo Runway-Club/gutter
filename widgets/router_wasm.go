@@ -25,7 +25,7 @@ func (r *Router) installHistoryListener() {
 		if s := loc.Get("search").String(); s != "" {
 			p += s
 		}
-		r.current.Set(p)
+		r.navigated(p)
 		return nil
 	})
 	js.Global().Get("window").Call("addEventListener", "popstate", cb)

@@ -34,26 +34,80 @@ type RouteBuilder func(params RouteParams) gutter.Widget
 //
 // Pattern syntax is intentionally minimal: literal segments must match
 // exactly, segments prefixed with ":" capture the corresponding path segment.
-// No wildcards, no nested routers, no guards — wrap the route builder if you
-// need those.
+// No wildcards and no nested routers — wrap the route builder if you need those.
+//
+// Guards/redirects ARE supported: pass NavGuards to NewRouter (or add them with
+// Guard). Every navigation — Push/Replace, browser back/forward, and the
+// initial load — is routed through the guards, which can rewrite the
+// destination (e.g. send "/dashboard" to "/login" when unauthenticated).
 type Router struct {
 	routes   map[string]RouteBuilder
 	notFound gutter.Widget
 	current  *gutter.Notifier[string]
+	guards   []NavGuard
 }
 
+// NavGuard inspects an intended destination path and returns the path to
+// actually navigate to. Return the path unchanged to allow the navigation;
+// return a different path to redirect; return the current path to effectively
+// block it. Guards run in order and the result is re-checked, so one guard's
+// redirect is itself guarded (capped to avoid an infinite redirect loop).
+type NavGuard func(to string) string
+
 // NewRouter creates the router, seeds its current path from the browser's
-// location (on WASM) or "/" (on host), and installs the popstate listener so
-// browser back/forward updates the tree. notFound is rendered when no route
-// pattern matches.
-func NewRouter(routes map[string]RouteBuilder, notFound gutter.Widget) *Router {
+// location (on WASM) or "/" (on host) — run through any guards — and installs
+// the popstate listener so browser back/forward updates the tree. notFound is
+// rendered when no route pattern matches.
+func NewRouter(routes map[string]RouteBuilder, notFound gutter.Widget, guards ...NavGuard) *Router {
 	r := &Router{
 		routes:   routes,
 		notFound: notFound,
-		current:  gutter.NewNotifier(initialPath()),
+		guards:   guards,
 	}
+	start := initialPath()
+	resolved := r.resolve(start)
+	r.current = gutter.NewNotifier(resolved)
 	r.installHistoryListener()
+	if resolved != start {
+		// Land on a guarded redirect: fix the URL bar without a history entry.
+		r.replaceHistory(resolved)
+	}
 	return r
+}
+
+// Guard appends a NavGuard after construction (e.g. once an auth store exists).
+// Returns the router for chaining.
+func (r *Router) Guard(g NavGuard) *Router {
+	r.guards = append(r.guards, g)
+	return r
+}
+
+// resolve runs path through every guard, re-checking until the result is stable
+// (so a redirect target is itself guarded). The iteration cap prevents an
+// infinite loop if two guards bounce a path back and forth.
+func (r *Router) resolve(to string) string {
+	for range 10 {
+		next := to
+		for _, g := range r.guards {
+			next = g(next)
+		}
+		if next == to {
+			return to
+		}
+		to = next
+	}
+	return to
+}
+
+// navigated guards a path the browser restored (back/forward) and, if a guard
+// redirected, rewrites history before updating current. Called from the wasm
+// popstate listener.
+func (r *Router) navigated(path string) {
+	resolved := r.resolve(path)
+	if resolved != path {
+		r.replaceHistory(resolved)
+	}
+	r.current.Set(resolved)
 }
 
 // Current returns the currently active path.
@@ -63,14 +117,16 @@ func (r *Router) Current() string { return r.current.Value() }
 // directly (e.g. by an external ObserverBuilder for breadcrumbs or analytics).
 func (r *Router) Listenable() gutter.Listenable[string] { return r.current }
 
-// Push navigates to path, pushing a new history entry.
+// Push navigates to path (after guards), pushing a new history entry.
 func (r *Router) Push(path string) {
+	path = r.resolve(path)
 	r.pushHistory(path)
 	r.current.Set(path)
 }
 
-// Replace navigates to path without growing the history stack.
+// Replace navigates to path (after guards) without growing the history stack.
 func (r *Router) Replace(path string) {
+	path = r.resolve(path)
 	r.replaceHistory(path)
 	r.current.Set(path)
 }

@@ -84,10 +84,11 @@ func headingSpec(t *themes.Theme, level HeadingLevel) themes.TextSpec {
 // strong variant; Small drops to caption size; both together gives the
 // strong-caption role. Color defaults to the theme's ink color.
 type Body struct {
-	Text  string
-	Bold  bool
-	Small bool
-	Color string
+	Text   string
+	Bold   bool
+	Small  bool
+	Color  string
+	Inline bool // render a <span> instead of a <p> so the text flows inline
 }
 
 func (b Body) Build(ctx *gutter.BuildContext) gutter.Widget {
@@ -103,7 +104,19 @@ func (b Body) Build(ctx *gutter.BuildContext) gutter.Widget {
 	default:
 		spec = t.Typography.Body
 	}
-	return Text{Data: b.Text, Style: styleFromSpec(spec, fallback(resolveColor(t, b.Color), t.Colors.Ink))}
+	// Render a real <p> (margin reset to 0) so prose has paragraph semantics for
+	// screen readers; the theme spec owns sizing/weight/color. Use Inline:true
+	// for a <span> when the text must flow within a line.
+	tag := "p"
+	if b.Inline {
+		tag = "span"
+	}
+	style := map[string]string{
+		"color":  fallback(resolveColor(t, b.Color), t.Colors.Ink),
+		"margin": "0",
+	}
+	applySpec(style, spec)
+	return Styled{Tag: tag, Text: b.Text, Style: style}
 }
 
 // Caption is shorthand for Body{Small: true}.

@@ -87,7 +87,7 @@ func popupRender(ctx *gutter.BuildContext, p Popup, isOpen bool) gutter.Widget {
 	if p.Child != nil {
 		sheetChildren = []gutter.Widget{p.Child}
 	}
-	sheet := Styled{Style: sheetStyle, Children: sheetChildren}
+	sheet := Styled{Attrs: dialogAttrs(isOpen), Style: sheetStyle, Children: sheetChildren}
 
 	return Styled{
 		Style:    map[string]string{"display": "contents"},
