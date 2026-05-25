@@ -64,6 +64,7 @@ func MountInto(selector string, root Widget, opts ...Option) *App {
 	} else {
 		a.root.mount(container, js.Null(), a.ctx)
 	}
+	registerApp(a) // track for Inspect()/EnableDevtools
 	return a
 }
 
