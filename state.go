@@ -32,8 +32,13 @@ type WidgetUpdater interface {
 // stateElement is the slice of statefulElement that the State sees: just
 // enough to request a rebuild of its own subtree. The concrete implementation
 // lives in element_wasm.go.
+//
+// scheduleRebuild is the SetState path: it requests a rebuild that the runtime
+// batches into a microtask so back-to-back SetState calls collapse into one
+// pass. rebuild() is the synchronous variant the runtime uses internally.
 type stateElement interface {
 	rebuild()
+	scheduleRebuild()
 }
 
 // elementBinder is satisfied by StateObject (via embedding). The framework
@@ -58,10 +63,15 @@ type StateObject struct {
 
 // SetState mutates state and asks the framework to rebuild the subtree owned
 // by this State. If the state has not yet been mounted, the call is a no-op.
+//
+// The rebuild is batched: multiple SetState calls in the same event-loop turn
+// (e.g. several Notifier listeners firing, or a loop calling SetState) coalesce
+// into a single rebuild on the next microtask. Don't rely on the DOM being
+// updated synchronously when SetState returns.
 func (s *StateObject) SetState(fn func()) {
 	fn()
 	if s.elem != nil {
-		s.elem.rebuild()
+		s.elem.scheduleRebuild()
 	}
 }
 

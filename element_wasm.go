@@ -31,6 +31,11 @@ type Element interface {
 	dom() js.Value
 	// widget returns the current Widget instance.
 	widget() Widget
+	// widgetType returns the cached reflect.Type of the current widget. It is
+	// fixed for the element's lifetime: reconcile only reuses an element for a
+	// widget of the same Go type, so the type never changes across update.
+	// Caching it here avoids reflecting on the old widget every reconcile.
+	widgetType() reflect.Type
 	// key returns the widget's reconciliation key (nil if unkeyed).
 	key() any
 }
@@ -38,13 +43,14 @@ type Element interface {
 // newElement creates the right Element type for a given Widget without
 // mounting it. The element has no DOM until mount is called.
 func newElement(w Widget) Element {
+	wt := reflect.TypeOf(w)
 	switch x := w.(type) {
 	case HostWidget:
-		return &hostElement{w: x}
+		return &hostElement{w: x, wt: wt}
 	case StatefulWidget:
-		return &statefulElement{w: x}
+		return &statefulElement{w: x, wt: wt}
 	case StatelessWidget:
-		return &statelessElement{w: x}
+		return &statelessElement{w: x, wt: wt}
 	}
 	panic("gutter: value does not implement HostWidget, StatelessWidget, or StatefulWidget")
 }
@@ -59,7 +65,7 @@ func widgetKey(w Widget) any {
 // canUpdate reports whether an existing Element can be reused in place to
 // represent newW. We require both the Go type and the key to match.
 func canUpdate(old Element, newW Widget) bool {
-	if reflect.TypeOf(old.widget()) != reflect.TypeOf(newW) {
+	if old.widgetType() != reflect.TypeOf(newW) {
 		return false
 	}
 	return old.key() == widgetKey(newW)
@@ -167,14 +173,16 @@ type hostElement struct {
 	parent    js.Value
 	node      js.Value
 	w         HostWidget
+	wt        reflect.Type
 	host      *Host
 	children  []Element
 	listeners map[string]js.Func
 }
 
-func (e *hostElement) widget() Widget { return e.w }
-func (e *hostElement) dom() js.Value  { return e.node }
-func (e *hostElement) key() any       { return widgetKey(e.w) }
+func (e *hostElement) widget() Widget           { return e.w }
+func (e *hostElement) widgetType() reflect.Type { return e.wt }
+func (e *hostElement) dom() js.Value            { return e.node }
+func (e *hostElement) key() any                 { return widgetKey(e.w) }
 
 func (e *hostElement) mount(parent, before js.Value, ctx *BuildContext) {
 	e.parent = parent
@@ -186,7 +194,7 @@ func (e *hostElement) mount(parent, before js.Value, ctx *BuildContext) {
 	if e.host.Text != "" {
 		e.node.Set("textContent", e.host.Text)
 	}
-	e.attachEvents(e.host.Events)
+	e.syncEvents(e.host.Events)
 	parent.Call("insertBefore", e.node, before)
 	e.children = make([]Element, 0, len(e.host.Children))
 	for _, childW := range e.host.Children {
@@ -201,24 +209,27 @@ func (e *hostElement) mount(parent, before js.Value, ctx *BuildContext) {
 
 func (e *hostElement) update(newW Widget, ctx *BuildContext) {
 	newHost := newW.(HostWidget).Host()
-	if newHost.Text != e.host.Text {
+	oldHost := e.host
+	// Assign w/host before reconciling children or syncing events: the
+	// persistent event listeners dispatch through e.host.Events at fire time,
+	// so e.host must already point at the new handlers.
+	e.w = newW.(HostWidget)
+	e.host = newHost
+	if newHost.Text != oldHost.Text {
 		// textContent rewrites all children; do this BEFORE children
 		// reconciliation if the widget actually uses text. In practice a
 		// HostWidget either has text or children, not both.
 		e.node.Set("textContent", newHost.Text)
 	}
-	applyAttrs(e.node, e.host.Attrs, newHost.Attrs)
-	applyStyle(e.node, e.host.Style, newHost.Style)
-	e.detachEvents()
-	e.attachEvents(newHost.Events)
+	applyAttrs(e.node, oldHost.Attrs, newHost.Attrs)
+	applyStyle(e.node, oldHost.Style, newHost.Style)
+	e.syncEvents(newHost.Events)
 	e.children = reconcileChildren(e.node, e.children, newHost.Children, ctx)
-	e.w = newW.(HostWidget)
-	e.host = newHost
-	if e.host.OnMount != nil {
+	if newHost.OnMount != nil {
 		// Treat update as a remount signal for hook-style widgets (Canvas
 		// re-paints when its size or paint callback changes). The hook
 		// fires after the DOM is reconciled so handlers see the new state.
-		e.host.OnMount(e.node)
+		newHost.OnMount(e.node)
 	}
 }
 
@@ -230,51 +241,50 @@ func (e *hostElement) unmount() {
 		child.unmount()
 	}
 	e.children = nil
-	e.detachEvents()
+	e.releaseEvents()
 	if !e.parent.IsUndefined() && !e.parent.IsNull() {
 		e.parent.Call("removeChild", e.node)
 	}
 }
 
-func (e *hostElement) attachEvents(events map[string]func(Event)) {
-	if len(events) == 0 {
+// syncEvents reconciles the set of attached DOM listeners against newEvents by
+// NAME only. For each event name we register exactly one persistent js.Func
+// that, when fired, looks up the current handler via e.host.Events[name] — so
+// a rebuild that swaps the handler closure (the common case, since handlers are
+// fresh closures every Build) requires no DOM work at all: the name set is
+// unchanged and the listener already dispatches to the latest handler. Only
+// added or removed event NAMES touch the DOM. This avoids the
+// release-all/recreate-all churn that made every reconcile pay for
+// js.FuncOf + addEventListener on every handler.
+func (e *hostElement) syncEvents(newEvents map[string]func(Event)) {
+	// Remove listeners whose event name is gone.
+	for name, cb := range e.listeners {
+		if _, ok := newEvents[name]; !ok {
+			e.node.Call("removeEventListener", name, cb)
+			cb.Release()
+			delete(e.listeners, name)
+		}
+	}
+	if len(newEvents) == 0 {
 		return
 	}
 	if e.listeners == nil {
-		e.listeners = make(map[string]js.Func, len(events))
+		e.listeners = make(map[string]js.Func, len(newEvents))
 	}
-	for name, handler := range events {
+	// Add a persistent dispatcher for each newly-seen event name.
+	for name := range newEvents {
+		if _, ok := e.listeners[name]; ok {
+			continue
+		}
 		n := name
-		h := handler
-		cb := js.FuncOf(func(this js.Value, args []js.Value) interface{} {
+		cb := js.FuncOf(func(this js.Value, args []js.Value) any {
+			h := e.host.Events[n]
+			if h == nil {
+				return nil
+			}
 			ev := Event{Type: n}
 			if len(args) > 0 {
-				raw := args[0]
-				target := raw.Get("target")
-				if !target.IsUndefined() && !target.IsNull() {
-					v := target.Get("value")
-					if !v.IsUndefined() && !v.IsNull() {
-						ev.Value = v.String()
-					}
-				}
-				// Pointer/mouse coordinates. clientX/clientY exist on
-				// MouseEvent and PointerEvent; offsetX/offsetY would be
-				// element-local but aren't part of the PointerEvent spec.
-				if x := raw.Get("clientX"); !x.IsUndefined() && !x.IsNull() {
-					ev.X = x.Float()
-				}
-				if y := raw.Get("clientY"); !y.IsUndefined() && !y.IsNull() {
-					ev.Y = y.Float()
-				}
-				if x := raw.Get("offsetX"); !x.IsUndefined() && !x.IsNull() {
-					ev.OffsetX = x.Float()
-				}
-				if y := raw.Get("offsetY"); !y.IsUndefined() && !y.IsNull() {
-					ev.OffsetY = y.Float()
-				}
-				if k := raw.Get("key"); !k.IsUndefined() && !k.IsNull() {
-					ev.Key = k.String()
-				}
+				fillEvent(&ev, n, args[0])
 			}
 			h(ev)
 			return nil
@@ -284,12 +294,68 @@ func (e *hostElement) attachEvents(events map[string]func(Event)) {
 	}
 }
 
-func (e *hostElement) detachEvents() {
+func (e *hostElement) releaseEvents() {
 	for name, cb := range e.listeners {
 		e.node.Call("removeEventListener", name, cb)
 		cb.Release()
 	}
 	e.listeners = nil
+}
+
+// fillEvent reads only the fields of the raw DOM event that are meaningful for
+// the given event name, instead of probing all six on every fire. Each
+// raw.Get crosses the Go↔JS boundary, so a click that used to cost six reads
+// (value + 4 coords + key) now costs four, and a text "input" event costs one.
+func fillEvent(ev *Event, name string, raw js.Value) {
+	if eventCarriesValue(name) {
+		if target := raw.Get("target"); !target.IsUndefined() && !target.IsNull() {
+			if v := target.Get("value"); !v.IsUndefined() && !v.IsNull() {
+				ev.Value = v.String()
+			}
+		}
+	}
+	if eventCarriesPointer(name) {
+		ev.X = floatProp(raw, "clientX")
+		ev.Y = floatProp(raw, "clientY")
+		ev.OffsetX = floatProp(raw, "offsetX")
+		ev.OffsetY = floatProp(raw, "offsetY")
+	}
+	if strings.HasPrefix(name, "key") {
+		if k := raw.Get("key"); !k.IsUndefined() && !k.IsNull() {
+			ev.Key = k.String()
+		}
+	}
+}
+
+func floatProp(raw js.Value, name string) float64 {
+	if v := raw.Get(name); !v.IsUndefined() && !v.IsNull() {
+		return v.Float()
+	}
+	return 0
+}
+
+// eventCarriesValue reports whether target.value is worth reading for this
+// event. Form/typing events carry it; pure pointer events don't.
+func eventCarriesValue(name string) bool {
+	switch name {
+	case "input", "change", "blur", "focus", "submit", "search", "paste":
+		return true
+	}
+	return strings.HasPrefix(name, "key")
+}
+
+// eventCarriesPointer reports whether clientX/clientY/offsetX/offsetY are
+// meaningful for this event.
+func eventCarriesPointer(name string) bool {
+	switch name {
+	case "click", "dblclick", "contextmenu", "wheel", "auxclick":
+		return true
+	}
+	return strings.HasPrefix(name, "pointer") ||
+		strings.HasPrefix(name, "mouse") ||
+		strings.HasPrefix(name, "drag") ||
+		strings.HasPrefix(name, "touch") ||
+		name == "drop"
 }
 
 func applyAttrs(node js.Value, oldAttrs, newAttrs map[string]string) {
@@ -340,10 +406,12 @@ func styleEqual(a, b map[string]string) bool {
 type statelessElement struct {
 	parent js.Value
 	w      StatelessWidget
+	wt     reflect.Type
 	child  Element
 }
 
-func (e *statelessElement) widget() Widget { return e.w }
+func (e *statelessElement) widget() Widget           { return e.w }
+func (e *statelessElement) widgetType() reflect.Type { return e.wt }
 func (e *statelessElement) dom() js.Value {
 	if e.child == nil {
 		return js.Undefined()
@@ -375,14 +443,17 @@ func (e *statelessElement) unmount() {
 // =========== statefulElement ===========
 
 type statefulElement struct {
-	parent js.Value
-	ctx    *BuildContext
-	w      StatefulWidget
-	state  State
-	child  Element
+	parent  js.Value
+	ctx     *BuildContext
+	w       StatefulWidget
+	wt      reflect.Type
+	state   State
+	child   Element
+	mounted bool
 }
 
-func (e *statefulElement) widget() Widget { return e.w }
+func (e *statefulElement) widget() Widget           { return e.w }
+func (e *statefulElement) widgetType() reflect.Type { return e.wt }
 func (e *statefulElement) dom() js.Value {
 	if e.child == nil {
 		return js.Undefined()
@@ -410,6 +481,7 @@ func (e *statefulElement) mount(parent, before js.Value, ctx *BuildContext) {
 	childW := e.state.Build(ctx)
 	e.child = newElement(childW)
 	e.child.mount(parent, before, ctx)
+	e.mounted = true
 }
 
 // update is called when an ancestor rebuild produces a new widget instance of
@@ -428,19 +500,79 @@ func (e *statefulElement) update(newW Widget, ctx *BuildContext) {
 	e.rebuild()
 }
 
-// rebuild is invoked by the State when SetState fires. It rebuilds only this
-// subtree, reusing the parent DOM and the current Element.
+// rebuild rebuilds only this subtree, reusing the parent DOM and the current
+// Element. It is the synchronous path taken by an ancestor-driven update.
 func (e *statefulElement) rebuild() {
+	if !e.mounted {
+		return
+	}
 	newChildW := e.state.Build(e.ctx)
 	e.child = reconcile(e.parent, e.child, newChildW, e.ctx)
 }
 
+// scheduleRebuild is the SetState path: rather than rebuilding synchronously,
+// it enqueues this element and lets the microtask flush coalesce repeated
+// SetState calls (and SetStates across sibling elements) into a single rebuild
+// pass per element. Mirrors React's batched updates.
+func (e *statefulElement) scheduleRebuild() {
+	enqueueRebuild(e)
+}
+
 func (e *statefulElement) unmount() {
+	e.mounted = false
 	if disp, ok := e.state.(StateDisposer); ok {
 		disp.Dispose()
 	}
 	if e.child != nil {
 		e.child.unmount()
 		e.child = nil
+	}
+}
+
+// =========== batched rebuild scheduler ===========
+//
+// SetState enqueues its element here instead of rebuilding inline. The first
+// enqueue of a flush cycle schedules a microtask (queueMicrotask) that drains
+// the queue. Repeated SetState on the same element within one tick collapses to
+// one rebuild; SetStates on different elements all flush together. Elements
+// unmounted before the flush are skipped via their mounted flag.
+//
+// WASM Go runs on the single JS event loop, so no locking is needed: enqueue
+// and flush never interleave.
+var (
+	rebuildQueue   []*statefulElement
+	rebuildQueued  = map[*statefulElement]bool{}
+	flushScheduled bool
+	flushFn        js.Func
+)
+
+func enqueueRebuild(e *statefulElement) {
+	if rebuildQueued[e] {
+		return
+	}
+	rebuildQueued[e] = true
+	rebuildQueue = append(rebuildQueue, e)
+	if flushScheduled {
+		return
+	}
+	flushScheduled = true
+	if flushFn.IsUndefined() {
+		flushFn = js.FuncOf(func(js.Value, []js.Value) any {
+			flushRebuilds()
+			return nil
+		})
+	}
+	js.Global().Call("queueMicrotask", flushFn)
+}
+
+func flushRebuilds() {
+	// Snapshot and reset before rebuilding: a rebuild may itself call SetState,
+	// which must land in the next cycle's queue, not this drain.
+	queue := rebuildQueue
+	rebuildQueue = nil
+	rebuildQueued = map[*statefulElement]bool{}
+	flushScheduled = false
+	for _, e := range queue {
+		e.rebuild()
 	}
 }
