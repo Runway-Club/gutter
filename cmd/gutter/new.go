@@ -3,6 +3,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,6 +14,12 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 )
+
+// gutterICO is the Gutter brand icon, written into a scaffolded project's
+// public/favicon.ico (served at /favicon.ico) and shown in the starter UI.
+//
+//go:embed gutter.ico
+var gutterICO []byte
 
 const mainGoTemplate = `package main
 
@@ -27,7 +34,7 @@ import (
 func Root() gutter.Widget {
 	return widgets.Scaffold{
 		Title: "__NAME__",
-		Theme: themes.Apple,
+		Theme: themes.Meta, // swap for themes.Apple or themes.Neutral
 		AppBar: widgets.AppBar{
 			Title: "__NAME__",
 		},
@@ -38,10 +45,15 @@ func Root() gutter.Widget {
 					Variant: widgets.CardFeature,
 					Child: widgets.Column{
 						CrossAxisAlign: widgets.CrossAxisCenter,
-						Spacing:        16,
+						Spacing:        12,
 						Children: []gutter.Widget{
+							// "/favicon.ico" is an absolute path, so it resolves the
+							// same on every route (CSR and SSR alike).
+							widgets.Image{Src: "/favicon.ico", Alt: "Gutter", Width: "72px", Height: "72px"},
 							widgets.Heading{Level: widgets.H2, Text: "Hello, Gutter!"},
-							widgets.Body{Text: "Pick a theme and ship — no CSS needed."},
+							// Gutter's slogan.
+							widgets.Body{Text: "Build for the web in Go — the Flutter way."},
+							widgets.Caption{Text: "A project by Runway Club"},
 							widgets.Button{
 								Variant: widgets.ButtonPrimary,
 								Label:   "Get started",
@@ -51,13 +63,142 @@ func Root() gutter.Widget {
 				},
 			},
 		},
+		Footer: widgets.Center{
+			Child: widgets.Caption{Text: "© Runway Club · Powered by Gutter"},
+		},
 	}
 }
+
+// headHTML mirrors the favicon + font <link>s from index.html, injected into
+// the <head> of SSR pages ("gutter run --ssr") so they get the same icon and
+// fonts as the client-rendered page. The SSR document already supplies charset,
+// viewport, and a margin reset, so this only adds the brand bits.
+const headHTML = "<link rel=\"icon\" type=\"image/x-icon\" href=\"/favicon.ico\">" +
+	"<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">" +
+	"<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>" +
+	"<link href=\"https://fonts.googleapis.com/css2?family=Lexend:wght@100..900&display=swap\" rel=\"stylesheet\">" +
+	"<link href=\"https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200\" rel=\"stylesheet\">"
 
 func main() {
 	// One entry for both modes: "gutter run" serves this client-side; "gutter
 	// run --ssr" builds the wasm and runs this same program as an SSR server.
-	gutter.Serve(gutter.Config{Root: Root})
+	gutter.Serve(gutter.Config{Root: Root, Head: headHTML})
+}
+`
+
+// ssrMainGoTemplate is the --ssr scaffold: one main.go that server-renders for
+// fast first paint + SEO (gutter.Head), hydrates on the client, and demonstrates
+// typed client↔server RPC. `gutter run --ssr` builds the wasm then runs this same
+// program as the SSR server; `gutter run` serves it client-side.
+const ssrMainGoTemplate = `package main
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/Runway-Club/gutter"
+	"github.com/Runway-Club/gutter/rpc"
+	"github.com/Runway-Club/gutter/themes"
+	"github.com/Runway-Club/gutter/widgets"
+)
+
+// PingRequest/PingResponse are shared by the wasm client and the host server.
+// Change a field and BOTH sides fail to compile — the point of typed RPC.
+type PingRequest struct {
+	Name string ` + "`json:\"name\"`" + `
+}
+
+type PingResponse struct {
+	Message string ` + "`json:\"message\"`" + `
+}
+
+// Root is server-rendered for instant first paint + SEO (gutter.Head injects
+// <title>/<meta> into the page <head>), then hydrated on the client. The same
+// Root runs on both sides — gutter.Serve compiles this program twice.
+func Root() gutter.Widget {
+	return gutter.Head{
+		Title:    "__NAME__ — built with Gutter",
+		Meta:     map[string]string{"description": "A server-rendered Gutter app with typed RPC."},
+		Property: map[string]string{"og:title": "__NAME__"},
+		Child:    pinger{},
+	}
+}
+
+type pinger struct{}
+
+func (pinger) CreateState() gutter.State { return &pingerState{} }
+
+type pingerState struct {
+	gutter.StateObject
+	reply string
+	busy  bool
+}
+
+func (s *pingerState) Build(ctx *gutter.BuildContext) gutter.Widget {
+	label := "Ping the server"
+	if s.busy {
+		label = "…"
+	}
+	reply := s.reply
+	if reply == "" {
+		reply = "(not called yet)"
+	}
+	return widgets.Scaffold{
+		Title:  "__NAME__",
+		Theme:  themes.Meta,
+		AppBar: widgets.AppBar{Title: "__NAME__"},
+		Body: widgets.Surface{Variant: widgets.SurfaceAlt, Child: widgets.Center{Child: widgets.Card{
+			Variant: widgets.CardFeature,
+			Child: widgets.Column{
+				CrossAxisAlign: widgets.CrossAxisCenter,
+				Spacing:        12,
+				Children: []gutter.Widget{
+					widgets.Image{Src: "/favicon.ico", Alt: "Gutter", Width: "72px", Height: "72px"},
+					widgets.Heading{Level: widgets.H2, Text: "Server-rendered Gutter"},
+					widgets.Body{Text: "First paint is HTML from the server; then wasm hydrates and this button calls Go over typed RPC."},
+					widgets.Button{Variant: widgets.ButtonPrimary, Label: label, OnPressed: s.ping},
+					widgets.Caption{Text: "Reply: " + reply},
+				},
+			},
+		}}},
+		Footer: widgets.Center{Child: widgets.Caption{Text: "© Runway Club · Powered by Gutter"}},
+	}
+}
+
+// ping calls the server. rpc.Call blocks the goroutine on the fetch, so run it
+// off the UI path and SetState the reply back in.
+func (s *pingerState) ping() {
+	if s.busy {
+		return
+	}
+	s.SetState(func() { s.busy = true })
+	go func() {
+		res, err := rpc.Call[PingRequest, PingResponse](context.Background(), PingRequest{Name: "world"})
+		s.SetState(func() {
+			s.busy = false
+			if err != nil {
+				s.reply = "error: " + err.Error()
+			} else {
+				s.reply = res.Message
+			}
+		})
+	}()
+}
+
+func main() {
+	// "gutter run" serves this client-side; "gutter run --ssr" builds the wasm
+	// and runs this same program as the SSR server (render + RPC + assets).
+	gutter.Serve(gutter.Config{
+		Root:  Root,
+		Theme: themes.Meta,
+		// Registered once, runs only on the server. The shared PingRequest type
+		// keys the route; the client's rpc.Call reaches it with no extra wiring.
+		RPC: func() {
+			rpc.Handle(func(_ context.Context, r PingRequest) (PingResponse, error) {
+				return PingResponse{Message: fmt.Sprintf("Hello, %s! (from the Go server)", r.Name)}, nil
+			})
+		},
+	})
 }
 `
 
@@ -70,6 +211,7 @@ const indexHTMLTemplate = `<!DOCTYPE html>
        /user/42. Required for widgets.Router to survive page reloads. -->
   <base href="/">
   <title>__NAME__</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@100..900&display=swap" rel="stylesheet">
@@ -123,24 +265,26 @@ var (
 
 func newCmd() *cobra.Command {
 	var modulePath string
+	var ssr bool
 	cmd := &cobra.Command{
 		Use:   "new [name]",
 		Short: "Scaffold a new gutter project",
-		Long:  "Scaffold a new gutter project. Without arguments, prompts interactively for project name and module path.",
+		Long:  "Scaffold a new gutter project. Without arguments, prompts interactively for project name and module path. Pass --ssr for a server-rendered + typed-RPC starter.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			var name string
 			if len(args) == 1 {
 				name = args[0]
 			}
-			return runNew(name, modulePath)
+			return runNew(name, modulePath, ssr)
 		},
 	}
 	cmd.Flags().StringVarP(&modulePath, "module", "m", "", "Go module path (e.g. github.com/you/project)")
+	cmd.Flags().BoolVar(&ssr, "ssr", false, "scaffold a server-rendered (SSR) app with typed RPC + hydration")
 	return cmd
 }
 
-func runNew(name, modulePath string) error {
+func runNew(name, modulePath string, ssr bool) error {
 	// Interactive mode: prompt for any missing values.
 	if name == "" || modulePath == "" {
 		fields := []huh.Field{}
@@ -184,8 +328,12 @@ func runNew(name, modulePath string) error {
 		return err
 	}
 
+	mainTmpl := mainGoTemplate
+	if ssr {
+		mainTmpl = ssrMainGoTemplate
+	}
 	files := map[string]string{
-		"main.go":         strings.ReplaceAll(mainGoTemplate, "__NAME__", name),
+		"main.go":         strings.ReplaceAll(mainTmpl, "__NAME__", name),
 		"index.html":      strings.ReplaceAll(indexHTMLTemplate, "__NAME__", name),
 		"go.mod":          strings.ReplaceAll(goModTemplate, "__MODULE__", modulePath),
 		".gitignore":      gitignoreTemplate,
@@ -199,6 +347,16 @@ func runNew(name, modulePath string) error {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
+	}
+
+	// The Gutter brand icon. public/ is copied to the dist root by the build, so
+	// this lands at /favicon.ico — referenced by index.html and the starter UI.
+	favicon := filepath.Join(name, "public", "favicon.ico")
+	if err := os.MkdirAll(filepath.Dir(favicon), 0o755); err != nil {
+		return fmt.Errorf("mkdir %s: %w", filepath.Dir(favicon), err)
+	}
+	if err := os.WriteFile(favicon, gutterICO, 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", favicon, err)
 	}
 
 	printTitle("Project scaffolded")
@@ -215,7 +373,12 @@ func runNew(name, modulePath string) error {
 	if !gotLatest {
 		printDim("  go get github.com/Runway-Club/gutter@latest")
 	}
-	printDim("  gutter run dev")
+	if ssr {
+		printDim("  gutter run --ssr   # server-rendered + typed RPC")
+		printDim("  gutter run dev     # or client-side with live reload")
+	} else {
+		printDim("  gutter run dev")
+	}
 	fmt.Println()
 	printDim("(Local checkout? Add a replace directive to %s/go.mod pointing at your gutter checkout.)", name)
 	return nil

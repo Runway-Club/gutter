@@ -91,3 +91,28 @@ func TestHydrateTagMismatchFallback(t *testing.T) {
 		t.Fatalf("textContent = %q, want new", node.Get("textContent").String())
 	}
 }
+
+// On a tag mismatch, recovery is fine-grained: only the mismatched element is
+// recreated, while its server-rendered descendant DOM is MOVED into the new
+// node (identity preserved) rather than the whole subtree being rebuilt.
+func TestHydrateTagMismatchSalvagesChildren(t *testing.T) {
+	parent := freshParent()
+	parent.Set("innerHTML", "<section><b>deep</b></section>")
+	deepNode := parent.Get("firstChild").Get("firstChild") // the <b>
+
+	// Client renders <div> (mismatches <section>) containing the same <b> child.
+	w := testHost{tag: "div", children: []Widget{testHost{tag: "b", text: "deep"}}}
+	el := newElement(w)
+	el.hydrate(parent.Get("children").Index(0), testCtxVal)
+
+	root := el.dom()
+	if root.Get("tagName").String() != "DIV" {
+		t.Fatalf("root tag = %q, want DIV", root.Get("tagName").String())
+	}
+	if !root.Get("firstChild").Equal(deepNode) {
+		t.Error("descendant <b> was not salvaged across the parent tag mismatch")
+	}
+	if root.Get("firstChild").Get("textContent").String() != "deep" {
+		t.Errorf("salvaged child text = %q, want deep", root.Get("firstChild").Get("textContent").String())
+	}
+}

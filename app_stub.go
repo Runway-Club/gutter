@@ -26,3 +26,14 @@ func MountInto(selector string, root Widget, opts ...Option) *App {
 func MountWhenVisible(selector string, root Widget, opts ...Option) {
 	panic("gutter: MountWhenVisible is only available when built with GOOS=js GOARCH=wasm")
 }
+
+// Transition just runs fn on host builds — there is no rebuild scheduler during
+// SSR, so the priority distinction is meaningful only under GOOS=js GOARCH=wasm.
+func Transition(fn func()) { fn() }
+
+// Inspect returns nil on host builds — there is no live element tree to walk
+// outside the browser runtime.
+func Inspect() []InspectNode { return nil }
+
+// EnableDevtools is a no-op on host builds; the overlay needs the browser DOM.
+func EnableDevtools() {}

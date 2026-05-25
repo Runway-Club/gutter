@@ -5,12 +5,18 @@ import (
 	"github.com/Runway-Club/gutter/themes"
 )
 
-// activeTheme returns the theme on ctx, falling back to the framework
-// default (Apple) so widgets don't panic when used outside a normal RunApp
-// (e.g. in unit tests that don't construct a BuildContext).
+// activeTheme returns the theme in effect at this build position: a subtree
+// gutter.ThemeProvider wins, then the app-wide BuildContext.Theme (set by
+// WithTheme/Scaffold), then the framework default (Apple) so widgets don't
+// panic when used outside a normal RunApp (e.g. in unit tests).
 func activeTheme(ctx *gutter.BuildContext) *themes.Theme {
-	if ctx != nil && ctx.Theme != nil {
-		return ctx.Theme
+	if ctx != nil {
+		if t, ok := gutter.DependOn[*themes.Theme](ctx); ok && t != nil {
+			return t
+		}
+		if ctx.Theme != nil {
+			return ctx.Theme
+		}
 	}
 	return themes.Apple
 }
@@ -35,24 +41,23 @@ func applySpec(style map[string]string, spec themes.TextSpec) {
 	}
 }
 
-// styleFromSpec produces a TextStyle from a TextSpec plus an explicit color.
-// Used by the typography widgets (Heading, Body, Caption).
-func styleFromSpec(spec themes.TextSpec, color string) *TextStyle {
-	return &TextStyle{
-		Color:         color,
-		FontFamily:    spec.FontFamily,
-		FontSize:      spec.FontSize,
-		FontWeight:    spec.FontWeight,
-		LineHeight:    spec.LineHeight,
-		LetterSpacing: spec.LetterSpacing,
-	}
-}
-
 func fallback(value, def string) string {
 	if value != "" {
 		return value
 	}
 	return def
+}
+
+// dialogAttrs returns the ARIA attributes for a modal overlay sheet (Popup,
+// Drawer, BottomSheet). role=dialog + aria-modal lets screen readers treat it
+// as a modal; aria-hidden hides the always-mounted-but-closed sheet from the
+// accessibility tree so it isn't reachable while invisible.
+func dialogAttrs(open bool) map[string]string {
+	a := map[string]string{"role": "dialog", "aria-modal": "true"}
+	if !open {
+		a["aria-hidden"] = "true"
+	}
+	return a
 }
 
 // propSyncHost is a HostWidget that exposes OnMount and OnUnmount alongside

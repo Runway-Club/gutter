@@ -14,11 +14,26 @@ package gutter
 // HTML for instant first paint + SEO, then ship app.wasm to take over.
 
 import (
+	"context"
 	"fmt"
 	"html"
 	"sort"
 	"strings"
 )
+
+// SSRResolver is implemented by a State that can resolve its asynchronous work
+// synchronously during server-side rendering, so SSR emits the resolved UI
+// instead of a loading placeholder. AsyncBuilder implements it: ResolveSSR runs
+// its Load with the render context and stores the result, and its InitState
+// then skips re-loading. The SSR walk calls ResolveSSR before InitState.
+//
+// Caveat: without server→client data transfer, the hydrating client re-runs the
+// async work (starting from its pending state), so a data-heavy view may briefly
+// reflow after hydration. SSR still gives crawlers and first paint the resolved
+// content.
+type SSRResolver interface {
+	ResolveSSR(ctx context.Context)
+}
 
 // ssrVoidElements are HTML elements that have no closing tag or children.
 var ssrVoidElements = map[string]bool{
@@ -32,40 +47,66 @@ var ssrVoidElements = map[string]bool{
 // the same tokens they will at runtime. Returns an error if the tree contains a
 // value that implements none of HostWidget/StatelessWidget/StatefulWidget.
 func RenderToHTML(root Widget, opts ...Option) (string, error) {
-	cfg := newRunConfig(opts)
-	ctx := &BuildContext{Theme: cfg.theme}
-	var sb strings.Builder
-	if err := ssrRender(&sb, root, ctx); err != nil {
-		return "", err
-	}
-	return sb.String(), nil
+	_, body, err := RenderDocument(root, opts...)
+	return body, err
 }
 
-func ssrRender(sb *strings.Builder, w Widget, ctx *BuildContext) error {
+// RenderDocument renders the body HTML plus the <head> HTML contributed by any
+// gutter.Head widgets in the tree (title/meta/raw). ServeSSR uses this so
+// server-rendered pages get a real <title> and meta tags; call it directly if
+// you assemble your own document shell. The body is identical to RenderToHTML.
+func RenderDocument(root Widget, opts ...Option) (head, body string, err error) {
+	return RenderDocumentCtx(context.Background(), root, opts...)
+}
+
+// RenderDocumentCtx is RenderDocument with an explicit context, passed to any
+// SSRResolver (AsyncBuilder) so server-side data loads honor request deadlines
+// and cancellation. SSRHandler calls this with the HTTP request's context.
+func RenderDocumentCtx(rctx context.Context, root Widget, opts ...Option) (head, body string, err error) {
+	cfg := newRunConfig(opts)
+	ctx := &BuildContext{Theme: cfg.theme}
+	var bodyB, headB strings.Builder
+	if err := ssrRender(&bodyB, &headB, rctx, root, ctx); err != nil {
+		return "", "", err
+	}
+	return headB.String(), bodyB.String(), nil
+}
+
+func ssrRender(sb, head *strings.Builder, rctx context.Context, w Widget, ctx *BuildContext) error {
 	if w == nil {
 		return nil
+	}
+	// Widgets may contribute to the document <head> (gutter.Head) regardless of
+	// what they render in the body.
+	if hp, ok := w.(headProvider); ok {
+		head.WriteString(hp.headHTML())
 	}
 	// Mirror newElement's dispatch order: Host, Stateful, Stateless.
 	switch x := w.(type) {
 	case HostWidget:
-		return ssrRenderHost(sb, x.Host(), w, ctx)
+		return ssrRenderHost(sb, head, rctx, x.Host(), w, ctx)
 	case StatefulWidget:
 		st := x.CreateState()
 		if b, ok := st.(widgetBinder); ok {
 			b.bindWidget(w) // so State.Widget() works during Build
+		}
+		// Resolve async work synchronously (AsyncBuilder) BEFORE InitState, so
+		// the snapshot is Done by Build time and InitState skips re-loading.
+		if r, ok := st.(SSRResolver); ok {
+			r.ResolveSSR(rctx)
 		}
 		if init, ok := st.(StateInitializer); ok {
 			init.InitState()
 		}
 		// No bindElement: s.elem stays nil, so any SetState during Build is a
 		// no-op (see StateObject.SetState) — correct for a one-shot render.
-		return ssrRender(sb, st.Build(ctx), ctx)
+		return ssrRender(sb, head, rctx, st.Build(ctx), ctx)
 	case StatelessWidget:
 		saved := ctx.inherited
 		if p, ok := x.(inheritedProvider); ok {
 			ctx.inherited = p.provideInto(ctx.inherited)
 		}
-		err := ssrRender(sb, x.Build(ctx), ctx)
+		err := ssrRender(sb, head, rctx, x.Build(ctx), ctx)
 		ctx.inherited = saved
 		return err
 	default:
@@ -73,7 +114,7 @@ func ssrRender(sb *strings.Builder, w Widget, ctx *BuildContext) error {
 	}
 }
 
-func ssrRenderHost(sb *strings.Builder, h *Host, w Widget, ctx *BuildContext) error {
+func ssrRenderHost(sb, head *strings.Builder, rctx context.Context, h *Host, w Widget, ctx *BuildContext) error {
 	if h == nil {
 		return nil
 	}
@@ -110,7 +151,7 @@ func ssrRenderHost(sb *strings.Builder, h *Host, w Widget, ctx *BuildContext) er
 		sb.WriteString(html.EscapeString(h.Text))
 	}
 	for _, child := range h.Children {
-		if err := ssrRender(sb, child, ctx); err != nil {
+		if err := ssrRender(sb, head, rctx, child, ctx); err != nil {
 			return err
 		}
 	}

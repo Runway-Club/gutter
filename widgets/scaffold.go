@@ -66,8 +66,10 @@ func (s Scaffold) Build(ctx *gutter.BuildContext) gutter.Widget {
 	}
 	if s.Body != nil {
 		// Body takes the remaining space (flex: 1) and is itself a flex
-		// column so a Center inside it can use height: 100% reliably.
+		// column so a Center inside it can use height: 100% reliably. Rendered
+		// as a <main> landmark so assistive tech can jump to the main content.
 		children = append(children, Styled{
+			Tag: "main",
 			Style: map[string]string{
 				"flex":           "1",
 				"display":        "flex",
@@ -78,7 +80,13 @@ func (s Scaffold) Build(ctx *gutter.BuildContext) gutter.Widget {
 		})
 	}
 	if s.Footer != nil {
-		children = append(children, s.Footer)
+		// Wrap in a <footer> landmark (contentinfo) unless the caller already
+		// supplied one, so the footer is reachable by landmark navigation.
+		children = append(children, Styled{
+			Tag:      "footer",
+			Style:    map[string]string{"flex-shrink": "0"},
+			Children: []gutter.Widget{s.Footer},
+		})
 	}
 
 	return Styled{

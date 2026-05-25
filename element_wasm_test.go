@@ -125,6 +125,96 @@ func TestReconcileReplacesDifferentType(t *testing.T) {
 	}
 }
 
+// TestReconcileRemountsOnTagChange covers the tag-stability rule: a HostWidget
+// of the SAME Go type but a different rendered tag must remount (you can't morph
+// a <div> into a <span> by attribute diffing), while an unchanged tag updates in
+// place and keeps its DOM node.
+func TestReconcileRemountsOnTagChange(t *testing.T) {
+	parent := freshParent()
+	el := reconcile(parent, nil, testHost{tag: "div", text: "x"}, testCtxVal)
+	divNode := el.dom()
+	if got := divNode.Get("tagName").String(); got != "DIV" {
+		t.Fatalf("initial tag = %q, want DIV", got)
+	}
+
+	// Same type, same tag → update in place, same node.
+	elSame := reconcile(parent, el, testHost{tag: "div", text: "y"}, testCtxVal)
+	if !elSame.dom().Equal(divNode) {
+		t.Error("same tag should update in place, not remount")
+	}
+	if divNode.Get("textContent").String() != "y" {
+		t.Errorf("in-place update text = %q, want y", divNode.Get("textContent").String())
+	}
+
+	// Same type, different tag → remount into a <span>.
+	elDiff := reconcile(parent, elSame, testHost{tag: "span", text: "z"}, testCtxVal)
+	if elDiff.dom().Equal(divNode) {
+		t.Error("changed tag should remount, not reuse the <div> node")
+	}
+	if got := elDiff.dom().Get("tagName").String(); got != "SPAN" {
+		t.Fatalf("remounted tag = %q, want SPAN", got)
+	}
+	if parent.Get("childNodes").Get("length").Int() != 1 {
+		t.Errorf("expected exactly 1 child after remount, got %d", parent.Get("childNodes").Get("length").Int())
+	}
+}
+
+// portalRootHas reports whether any child of #gutter-portal-root has the given
+// textContent (the portal root is shared across tests).
+func portalRootHas(text string) bool {
+	root := js.Global().Get("document").Call("getElementById", "gutter-portal-root")
+	if root.IsNull() {
+		return false
+	}
+	kids := root.Get("childNodes")
+	for i := range kids.Get("length").Int() {
+		if kids.Index(i).Get("textContent").String() == text {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPortalTeleportsChild(t *testing.T) {
+	parent := freshParent()
+	el := newElement(Portal{Child: testHost{tag: "p", text: "ported"}})
+	el.mount(parent, js.Null(), testCtxVal)
+
+	// The tree position holds only the zero-size <template> anchor.
+	if n := parent.Get("childNodes").Get("length").Int(); n != 1 {
+		t.Fatalf("parent child count = %d, want 1 (the anchor)", n)
+	}
+	anchor := parent.Get("firstChild")
+	if got := anchor.Get("tagName").String(); got != "TEMPLATE" {
+		t.Fatalf("anchor tag = %q, want TEMPLATE", got)
+	}
+	if !el.dom().Equal(anchor) {
+		t.Error("portal dom() should be the anchor node")
+	}
+	// The child is teleported into the body-level portal root, not the parent.
+	if parent.Get("textContent").String() == "ported" {
+		t.Error("child should not be in the parent subtree")
+	}
+	if !portalRootHas("ported") {
+		t.Error("child not found in #gutter-portal-root")
+	}
+
+	// Update reconciles the child in place (in the portal root).
+	el.update(Portal{Child: testHost{tag: "p", text: "updated"}}, testCtxVal)
+	if !portalRootHas("updated") {
+		t.Error("updated child not found in portal root")
+	}
+
+	// Unmount removes the anchor and the teleported child.
+	el.unmount()
+	if n := parent.Get("childNodes").Get("length").Int(); n != 0 {
+		t.Errorf("anchor not removed on unmount: %d children remain", n)
+	}
+	if portalRootHas("updated") {
+		t.Error("teleported child not removed from portal root on unmount")
+	}
+}
+
 // ---- keyed reconciliation ----
 
 func childTexts(parent js.Value) []string {
@@ -319,6 +409,51 @@ func TestSetStateBatchesIntoOneRebuild(t *testing.T) {
 	flushRebuilds() // drain the microtask queue deterministically
 	if st.builds != 2 {
 		t.Fatalf("after flush builds = %d, want 2 (three SetStates coalesced into one rebuild)", st.builds)
+	}
+}
+
+// A transition SetState must not drain on the urgent microtask flush; it waits
+// for the (macrotask) transition flush.
+func TestTransitionDefersBehindUrgent(t *testing.T) {
+	parent := freshParent()
+	el := newElement(batchWidget{}).(*statefulElement)
+	el.mount(parent, js.Null(), testCtxVal)
+	st := el.state.(*batchState)
+
+	Transition(func() { st.SetState(func() {}) })
+	flushRebuilds() // urgent drain — must NOT touch the transition update
+	if st.builds != 1 {
+		t.Fatalf("urgent flush rebuilt a transition update (builds=%d, want 1)", st.builds)
+	}
+	flushTransitions()
+	if st.builds != 2 {
+		t.Fatalf("transition flush did not rebuild (builds=%d, want 2)", st.builds)
+	}
+}
+
+// An urgent update flushes on the microtask even while a transition is pending
+// on another element — urgent work is never blocked by a transition.
+func TestUrgentFlushesWhileTransitionPending(t *testing.T) {
+	parent := freshParent()
+	a := newElement(batchWidget{}).(*statefulElement)
+	a.mount(parent, js.Null(), testCtxVal)
+	b := newElement(batchWidget{}).(*statefulElement)
+	b.mount(parent, js.Null(), testCtxVal)
+	sa, sb := a.state.(*batchState), b.state.(*batchState)
+
+	Transition(func() { sa.SetState(func() {}) }) // low priority
+	sb.SetState(func() {})                        // urgent
+
+	flushRebuilds()
+	if sb.builds != 2 {
+		t.Fatalf("urgent update not flushed on microtask (builds=%d, want 2)", sb.builds)
+	}
+	if sa.builds != 1 {
+		t.Fatalf("transition flushed on the urgent microtask (builds=%d, want 1)", sa.builds)
+	}
+	flushTransitions()
+	if sa.builds != 2 {
+		t.Fatalf("transition not flushed (builds=%d, want 2)", sa.builds)
 	}
 }
 

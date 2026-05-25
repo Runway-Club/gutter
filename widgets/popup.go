@@ -87,10 +87,12 @@ func popupRender(ctx *gutter.BuildContext, p Popup, isOpen bool) gutter.Widget {
 	if p.Child != nil {
 		sheetChildren = []gutter.Widget{p.Child}
 	}
-	sheet := Styled{Style: sheetStyle, Children: sheetChildren}
+	sheet := Styled{Attrs: dialogAttrs(isOpen), Style: sheetStyle, Children: sheetChildren}
 
-	return Styled{
+	// Teleport into the body-level portal root so the fixed backdrop/sheet aren't
+	// trapped by an ancestor's transform/overflow/stacking context.
+	return gutter.Portal{Child: Styled{
 		Style:    map[string]string{"display": "contents"},
 		Children: []gutter.Widget{backdrop, sheet},
-	}
+	}}
 }

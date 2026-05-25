@@ -49,6 +49,11 @@ type Element interface {
 // mounting it. The element has no DOM until mount is called.
 func newElement(w Widget) Element {
 	wt := reflect.TypeOf(w)
+	// Portal is intercepted before the HostWidget branch: instead of rendering
+	// its placeholder, the runtime teleports its Child into the portal root.
+	if p, ok := w.(Portal); ok {
+		return &portalElement{w: p, wt: wt}
+	}
 	switch x := w.(type) {
 	case HostWidget:
 		return &hostElement{w: x, wt: wt}
@@ -60,6 +65,19 @@ func newElement(w Widget) Element {
 	panic("gutter: value does not implement HostWidget, StatelessWidget, or StatefulWidget")
 }
 
+// portalRoot returns the shared body-level container all Portals mount into,
+// creating it on first use.
+func portalRoot() js.Value {
+	doc := js.Global().Get("document")
+	root := doc.Call("getElementById", "gutter-portal-root")
+	if root.IsNull() {
+		root = doc.Call("createElement", "div")
+		root.Call("setAttribute", "id", "gutter-portal-root")
+		doc.Get("body").Call("appendChild", root)
+	}
+	return root
+}
+
 func widgetKey(w Widget) any {
 	if k, ok := w.(Keyed); ok {
 		return k.WidgetKey()
@@ -68,12 +86,33 @@ func widgetKey(w Widget) any {
 }
 
 // canUpdate reports whether an existing Element can be reused in place to
-// represent newW. We require both the Go type and the key to match.
+// represent newW. We require the Go type and key to match, and — for
+// HostWidgets — the rendered tag too.
 func canUpdate(old Element, newW Widget) bool {
 	if old.widgetType() != reflect.TypeOf(newW) {
 		return false
 	}
-	return old.key() == widgetKey(newW)
+	if old.key() != widgetKey(newW) {
+		return false
+	}
+	// Same Go type but a different rendered tag (a HostWidget that varies its
+	// Host().Tag by its fields) can't be updated in place: attribute-diffing a
+	// <div> into a <span> leaves the wrong element in the DOM. Force a remount.
+	if he, ok := old.(*hostElement); ok {
+		if hw, ok := newW.(HostWidget); ok && normTag(he.host) != normTag(hw.Host()) {
+			return false
+		}
+	}
+	return true
+}
+
+// normTag is the effective tag of a Host, normalizing the empty default to the
+// "div" that mount's createElement uses.
+func normTag(h *Host) string {
+	if h == nil || h.Tag == "" {
+		return "div"
+	}
+	return h.Tag
 }
 
 // reconcile is the single-child counterpart of reconcileChildren. It either
@@ -215,14 +254,22 @@ func (e *hostElement) mount(parent, before js.Value, ctx *BuildContext) {
 func (e *hostElement) hydrate(node js.Value, ctx *BuildContext) {
 	e.host = e.w.Host()
 	e.parent = node.Get("parentNode")
-	// Tag mismatch → the client built a different element than the server.
-	// Can't adopt: mount a fresh node in place and drop the stale SSR one.
-	if !sameTag(node, e.host.Tag) {
-		e.mount(e.parent, node, ctx)
+	if sameTag(node, e.host.Tag) {
+		e.node = node
+	} else {
+		// Tag mismatch: the client built a different element than the server.
+		// Recover fine-grainedly — recreate ONLY this element with the right tag
+		// and MOVE the server-rendered children into it, so their (potentially
+		// large) DOM subtrees survive and still get hydrated, instead of
+		// discarding the whole subtree. Warn so the divergence is visible.
+		warnHydrationMismatch(node, e.host.Tag)
+		e.node = js.Global().Get("document").Call("createElement", e.host.Tag)
+		for c := node.Get("firstChild"); !c.IsNull(); c = node.Get("firstChild") {
+			e.node.Call("appendChild", c)
+		}
+		e.parent.Call("insertBefore", e.node, node)
 		e.parent.Call("removeChild", node)
-		return
 	}
-	e.node = node
 	// Re-apply attrs/style/text idempotently so the client is authoritative
 	// even if the server markup drifted; then strip the SSR-only markers.
 	applyAttrs(e.node, nil, e.host.Attrs)
@@ -266,6 +313,22 @@ func sameTag(node js.Value, tag string) bool {
 		return false
 	}
 	return strings.EqualFold(tn.String(), tag)
+}
+
+// warnHydrationMismatch logs a console warning when the client builds a
+// different element tag than the server rendered — the usual cause of a
+// hydration recovery. Surfacing it helps developers find SSR/CSR divergence
+// (e.g. an AsyncBuilder whose pending and resolved states use different tags).
+func warnHydrationMismatch(node js.Value, want string) {
+	if want == "" {
+		want = "div"
+	}
+	got := "?"
+	if tn := node.Get("tagName"); !tn.IsUndefined() && !tn.IsNull() {
+		got = strings.ToLower(tn.String())
+	}
+	js.Global().Get("console").Call("warn",
+		"gutter: hydration mismatch — server rendered <"+got+">, client expected <"+strings.ToLower(want)+">; recreating the node and salvaging its children")
 }
 
 func (e *hostElement) update(newW Widget, ctx *BuildContext) {
@@ -523,6 +586,68 @@ func (e *statelessElement) unmount() {
 	}
 }
 
+// =========== portalElement ===========
+
+// portalElement leaves a zero-size <template> anchor at its tree position (so
+// the parent's reconciliation positioning is unaffected) and mounts its Child
+// into the shared body-level portal root instead.
+type portalElement struct {
+	w      Portal
+	wt     reflect.Type
+	anchor js.Value
+	root   js.Value
+	child  Element
+}
+
+func (e *portalElement) widget() Widget           { return e.w }
+func (e *portalElement) widgetType() reflect.Type { return e.wt }
+func (e *portalElement) key() any                 { return widgetKey(e.w) }
+func (e *portalElement) dom() js.Value            { return e.anchor }
+
+func (e *portalElement) mount(parent, before js.Value, ctx *BuildContext) {
+	doc := js.Global().Get("document")
+	e.anchor = doc.Call("createElement", "template")
+	e.anchor.Call("setAttribute", "data-gutter-portal", "1")
+	parent.Call("insertBefore", e.anchor, before)
+	e.root = portalRoot()
+	e.child = newElement(e.w.Child)
+	e.child.mount(e.root, js.Null(), ctx)
+}
+
+func (e *portalElement) hydrate(node js.Value, ctx *BuildContext) {
+	// node is the SSR placeholder <template data-gutter-portal>. Adopt it as the
+	// anchor; Child wasn't server-rendered into the root, so mount it fresh.
+	if sameTag(node, "template") {
+		e.anchor = node
+	} else {
+		// Defensive: structure drifted — make our own anchor in place.
+		doc := js.Global().Get("document")
+		e.anchor = doc.Call("createElement", "template")
+		node.Get("parentNode").Call("insertBefore", e.anchor, node)
+		node.Get("parentNode").Call("removeChild", node)
+	}
+	e.root = portalRoot()
+	e.child = newElement(e.w.Child)
+	e.child.mount(e.root, js.Null(), ctx)
+}
+
+func (e *portalElement) update(newW Widget, ctx *BuildContext) {
+	e.w = newW.(Portal)
+	e.child = reconcile(e.root, e.child, e.w.Child, ctx)
+}
+
+func (e *portalElement) unmount() {
+	if e.child != nil {
+		e.child.unmount()
+		e.child = nil
+	}
+	if !e.anchor.IsUndefined() && !e.anchor.IsNull() {
+		if p := e.anchor.Get("parentNode"); !p.IsNull() && !p.IsUndefined() {
+			p.Call("removeChild", e.anchor)
+		}
+	}
+}
+
 // =========== statefulElement ===========
 
 type statefulElement struct {
@@ -655,14 +780,29 @@ func (e *statefulElement) unmount() {
 //
 // WASM Go runs on the single JS event loop, so no locking is needed: enqueue
 // and flush never interleave.
+// There are two priorities. Urgent SetState (the default) drains on the next
+// microtask. Transition SetState — a SetState made inside Transition(fn) — drains
+// on a later macrotask (setTimeout 0), so it always yields to urgent work queued
+// in the meantime (e.g. a keystroke stays responsive while a transition rebuilds
+// a large filtered list). rebuild() is idempotent, so the rare element that sits
+// in both queues just rebuilds twice harmlessly.
 var (
-	rebuildQueue   []*statefulElement
-	rebuildQueued  = map[*statefulElement]bool{}
-	flushScheduled bool
-	flushFn        js.Func
+	rebuildQueue     []*statefulElement
+	rebuildQueued    = map[*statefulElement]bool{}
+	flushScheduled   bool
+	flushFn          js.Func
+	transitionQueue  []*statefulElement
+	transitionQueued = map[*statefulElement]bool{}
+	transitionSched  bool
+	transitionFn     js.Func
+	inTransition     bool // set while a Transition(fn) call runs
 )
 
 func enqueueRebuild(e *statefulElement) {
+	if inTransition {
+		enqueueTransition(e)
+		return
+	}
 	if rebuildQueued[e] {
 		return
 	}
@@ -681,6 +821,39 @@ func enqueueRebuild(e *statefulElement) {
 	js.Global().Call("queueMicrotask", flushFn)
 }
 
+func enqueueTransition(e *statefulElement) {
+	if transitionQueued[e] {
+		return
+	}
+	transitionQueued[e] = true
+	transitionQueue = append(transitionQueue, e)
+	if transitionSched {
+		return
+	}
+	transitionSched = true
+	if transitionFn.IsUndefined() {
+		transitionFn = js.FuncOf(func(js.Value, []js.Value) any {
+			flushTransitions()
+			return nil
+		})
+	}
+	// A macrotask runs after the microtask checkpoint, so any urgent rebuild
+	// queued before this fires drains first.
+	js.Global().Call("setTimeout", transitionFn, 0)
+}
+
+// Transition runs fn with its SetState calls marked low-priority: they drain on
+// a macrotask, after any urgent updates. Mirrors React's startTransition — wrap
+// state changes that can lag behind input (search filtering, tab switches):
+//
+//	gutter.Transition(func() { s.SetState(func() { s.query = q }) })
+func Transition(fn func()) {
+	prev := inTransition
+	inTransition = true
+	defer func() { inTransition = prev }()
+	fn()
+}
+
 func flushRebuilds() {
 	// Snapshot and reset before rebuilding: a rebuild may itself call SetState,
 	// which must land in the next cycle's queue, not this drain.
@@ -688,6 +861,16 @@ func flushRebuilds() {
 	rebuildQueue = nil
 	rebuildQueued = map[*statefulElement]bool{}
 	flushScheduled = false
+	for _, e := range queue {
+		e.rebuild()
+	}
+}
+
+func flushTransitions() {
+	queue := transitionQueue
+	transitionQueue = nil
+	transitionQueued = map[*statefulElement]bool{}
+	transitionSched = false
 	for _, e := range queue {
 		e.rebuild()
 	}

@@ -3,10 +3,13 @@
 package main
 
 import (
+	"compress/gzip"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
@@ -36,6 +39,13 @@ const nginxConfTemplate = `server {
         image/png         png;
         image/jpeg        jpg jpeg;
     }
+
+    # Serve the *.gz written by ` + "`gutter build`" + ` directly (best ratio, zero CPU),
+    # and gzip anything else compressible on the fly. Cuts app.wasm transfer ~3-4x.
+    gzip_static on;
+    gzip on;
+    gzip_types application/wasm application/javascript text/css image/svg+xml application/json;
+    gzip_min_length 1024;
 
     location / {
         try_files $uri $uri/ /index.html;
@@ -72,9 +82,80 @@ func runBuild(tinygo bool) error {
 	if err := bundleInto(outDir, true, tinygo); err != nil {
 		return err
 	}
+	if err := precompressDist(outDir); err != nil {
+		return err
+	}
 	fmt.Println()
 	printInfo("Output: %s", styleAccent.Render("./"+outDir+"/"))
 	return nil
+}
+
+// precompressDist writes a max-level gzip sibling (file.gz) next to every
+// compressible asset in dir. The SSR server (gutter.Serve) and a
+// gzip_static-enabled nginx both serve these pre-compressed bytes directly —
+// best ratio, zero per-request CPU. app.wasm is the big win (~3-4x smaller).
+// Small files aren't worth a separate request; existing .gz are refreshed.
+func precompressDist(dir string) error {
+	printTitle("Pre-compressing assets")
+	compressed := 0
+	err := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+		if err != nil || info.IsDir() {
+			return err
+		}
+		ext := strings.ToLower(filepath.Ext(p))
+		if !gzipWorthExt(ext) || info.Size() < 1024 {
+			return nil
+		}
+		gzPath := p + ".gz"
+		if err := gzipFile(p, gzPath); err != nil {
+			return fmt.Errorf("gzip %s: %w", p, err)
+		}
+		compressed++
+		if oi, statErr := os.Stat(gzPath); statErr == nil && info.Size() > 0 {
+			printOK("%s  %d KB → %d KB (%.0f%% smaller)", filepath.Base(p),
+				info.Size()/1024, oi.Size()/1024,
+				100*(1-float64(oi.Size())/float64(info.Size())))
+		}
+		return nil
+	})
+	if err == nil && compressed == 0 {
+		printDim("(no compressible assets ≥1 KB found)")
+	}
+	return err
+}
+
+// gzipWorthExt mirrors the server's compressibleByExt: text-like + wasm.
+func gzipWorthExt(ext string) bool {
+	switch ext {
+	case ".wasm", ".js", ".mjs", ".css", ".html", ".htm", ".json", ".svg", ".xml", ".txt", ".map":
+		return true
+	}
+	return false
+}
+
+func gzipFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	gz, err := gzip.NewWriterLevel(out, gzip.BestCompression)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(gz, in); err != nil {
+		gz.Close()
+		return err
+	}
+	if err := gz.Close(); err != nil {
+		return err
+	}
+	return out.Close()
 }
 
 // bundleInto compiles the project to WASM and assembles the supporting assets
