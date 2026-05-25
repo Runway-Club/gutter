@@ -5,12 +5,18 @@ import (
 	"github.com/Runway-Club/gutter/themes"
 )
 
-// activeTheme returns the theme on ctx, falling back to the framework
-// default (Apple) so widgets don't panic when used outside a normal RunApp
-// (e.g. in unit tests that don't construct a BuildContext).
+// activeTheme returns the theme in effect at this build position: a subtree
+// gutter.ThemeProvider wins, then the app-wide BuildContext.Theme (set by
+// WithTheme/Scaffold), then the framework default (Apple) so widgets don't
+// panic when used outside a normal RunApp (e.g. in unit tests).
 func activeTheme(ctx *gutter.BuildContext) *themes.Theme {
-	if ctx != nil && ctx.Theme != nil {
-		return ctx.Theme
+	if ctx != nil {
+		if t, ok := gutter.DependOn[*themes.Theme](ctx); ok && t != nil {
+			return t
+		}
+		if ctx.Theme != nil {
+			return ctx.Theme
+		}
 	}
 	return themes.Apple
 }
