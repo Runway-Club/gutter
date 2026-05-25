@@ -68,7 +68,7 @@ func SSRHandler(cfg SSRConfig) (http.Handler, error) {
 		// client-side routes still get server-rendered HTML. Head hints from
 		// gutter.Head widgets in the tree are appended after cfg.Head (so the
 		// app's title/meta can override static fonts/favicon links).
-		treeHead, body, err := RenderDocument(cfg.Root(), opts...)
+		treeHead, body, err := RenderDocumentCtx(r.Context(), cfg.Root(), opts...)
 		if err != nil {
 			http.Error(w, "gutter SSR render error: "+err.Error(), http.StatusInternalServerError)
 			return

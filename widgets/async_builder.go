@@ -70,13 +70,36 @@ type asyncState[T any] struct {
 	snapshot AsyncSnapshot[T]
 	cancel   context.CancelFunc
 	deps     []any
+	resolved bool // set when ResolveSSR loaded synchronously on the server
 }
 
 func (s *asyncState[T]) widget() AsyncBuilder[T] {
 	return s.Widget().(AsyncBuilder[T])
 }
 
+// ResolveSSR (gutter.SSRResolver) runs Load synchronously during server-side
+// rendering so SSR emits the resolved UI instead of the pending placeholder.
+// Called before InitState, which then skips spawning the async load.
+func (s *asyncState[T]) ResolveSSR(ctx context.Context) {
+	s.resolved = true
+	s.deps = s.widget().Deps
+	load := s.widget().Load
+	if load == nil {
+		s.snapshot = AsyncSnapshot[T]{State: AsyncDone}
+		return
+	}
+	data, err := load(ctx)
+	if err != nil {
+		s.snapshot = AsyncSnapshot[T]{State: AsyncFailed, Error: err}
+	} else {
+		s.snapshot = AsyncSnapshot[T]{State: AsyncDone, Data: data}
+	}
+}
+
 func (s *asyncState[T]) InitState() {
+	if s.resolved {
+		return // server already resolved Load synchronously (see ResolveSSR)
+	}
 	s.deps = s.widget().Deps
 	s.start()
 }
