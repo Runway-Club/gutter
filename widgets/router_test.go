@@ -8,8 +8,8 @@ import (
 
 func TestRouterStripsQueryWhenMatching(t *testing.T) {
 	r := NewRouter(map[string]RouteBuilder{
-		"/about":     func(RouteParams) gutter.Widget { return Text{Data: "about"} },
-		"/user/:id":  func(p RouteParams) gutter.Widget { return Text{Data: "user-" + p["id"]} },
+		"/about":    func(RouteParams) gutter.Widget { return Text{Data: "about"} },
+		"/user/:id": func(p RouteParams) gutter.Widget { return Text{Data: "user-" + p["id"]} },
 	}, Text{Data: "notfound"})
 
 	// Param route with a trailing query must still match and capture :id.

@@ -28,8 +28,8 @@ func (ssrBtn) Host() *Host {
 
 type ssrKeyed struct{ k string }
 
-func (ssrKeyed) Host() *Host          { return &Host{Tag: "li", Text: "item"} }
-func (k ssrKeyed) WidgetKey() any     { return k.k }
+func (ssrKeyed) Host() *Host      { return &Host{Tag: "li", Text: "item"} }
+func (k ssrKeyed) WidgetKey() any { return k.k }
 
 type ssrWrap struct{ child Widget }
 
@@ -45,8 +45,10 @@ type ssrCounterState struct {
 	initFired bool
 }
 
-func (s *ssrCounterState) InitState()                 { s.initFired = true; s.n += 100 }
-func (s *ssrCounterState) Build(*BuildContext) Widget { return ssrBox{tag: "span", text: fmt.Sprintf("n=%d", s.n)} }
+func (s *ssrCounterState) InitState() { s.initFired = true; s.n += 100 }
+func (s *ssrCounterState) Build(*BuildContext) Widget {
+	return ssrBox{tag: "span", text: fmt.Sprintf("n=%d", s.n)}
+}
 
 func mustRender(t *testing.T, w Widget) string {
 	t.Helper()

@@ -1,6 +1,7 @@
 // ssrgen renders Root() to HTML on the host and assembles two pages:
-//   dist-csr/  — empty #app, boots WASM (Gutter's current client-render flow)
-//   dist-ssr/  — pre-rendered HTML inlined in #app
+//
+//	dist-csr/  — empty #app, boots WASM (Gutter's current client-render flow)
+//	dist-ssr/  — pre-rendered HTML inlined in #app
 //
 // Both pages boot the same app.wasm (built with WithHydrate): the CSR page has
 // an empty #app so WASM mounts fresh; the SSR page has pre-rendered HTML so WASM

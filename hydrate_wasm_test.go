@@ -42,8 +42,8 @@ func TestHydrateAdoptsServerDOM(t *testing.T) {
 		t.Fatalf("expected hydration marker in SSR html: %s", html)
 	}
 	parent.Set("innerHTML", html)
-	serverRoot := parent.Get("firstChild")       // <section>
-	serverButton := serverRoot.Get("lastChild")  // <button>
+	serverRoot := parent.Get("firstChild")      // <section>
+	serverButton := serverRoot.Get("lastChild") // <button>
 	if serverButton.Get("textContent").String() != "count:0" {
 		t.Fatalf("server-rendered button = %q", serverButton.Get("textContent").String())
 	}
